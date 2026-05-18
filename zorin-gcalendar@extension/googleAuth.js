@@ -7,7 +7,10 @@ import GLib   from 'gi://GLib';
 import Gio    from 'gi://Gio';
 import Soup   from 'gi://Soup';
 import Secret from 'gi://Secret';
-import { randomString, sha256Base64Url } from './utils.js';
+import { randomString, sha256Base64Url, buildQueryString, parseQueryString } from './utils.js';
+
+Gio._promisify(Soup.Session.prototype,    'send_async',        'send_finish');
+Gio._promisify(Gio.InputStream.prototype, 'read_bytes_async',  'read_bytes_finish');
 
 const REDIRECT_PORT  = 9004;
 const REDIRECT_URI   = `http://localhost:${REDIRECT_PORT}`;
@@ -27,6 +30,8 @@ export class GoogleAuth {
         this._settings = extension.getSettings();
         this._session  = new Soup.Session();
         this._session.timeout = 15;
+        this._svc      = null;
+        this._tid      = null;
     }
 
     isAuthenticated() {
@@ -41,6 +46,7 @@ export class GoogleAuth {
     }
 
     async startAuthFlow() {
+        this._stopListener();
         const clientId = this._settings.get_string('client-id');
         if (!clientId) throw new Error('client-id não configurado nas preferências');
 
@@ -48,7 +54,7 @@ export class GoogleAuth {
         this._state    = randomString(16);
         const challenge = sha256Base64Url(this._verifier);
 
-        const params = new URLSearchParams({
+        const params = buildQueryString({
             client_id: clientId, redirect_uri: REDIRECT_URI,
             response_type: 'code', scope: SCOPES, state: this._state,
             code_challenge: challenge, code_challenge_method: 'S256',
@@ -86,39 +92,54 @@ export class GoogleAuth {
         const clientId     = this._settings.get_string('client-id');
         const clientSecret = this._settings.get_string('client-secret');
 
-        const tokens = await this._postToken(new URLSearchParams({
+        const tokens = await this._postToken(buildQueryString({
             refresh_token: rt, client_id: clientId,
             client_secret: clientSecret, grant_type: 'refresh_token',
-        }).toString());
+        }));
         await this._storeTokens(tokens);
     }
 
     /* ── internos ── */
 
+    _stopListener() {
+        if (this._tid !== null) {
+            GLib.source_remove(this._tid);
+            this._tid = null;
+        }
+        if (this._svc !== null) {
+            try { this._svc.stop();  } catch (_) {}
+            try { this._svc.close(); } catch (_) {}
+            this._svc = null;
+        }
+    }
+
     _listenForCode() {
         return new Promise((resolve, reject) => {
-            const svc = new Gio.SocketService();
-            try { svc.add_inet_port(REDIRECT_PORT, null); }
-            catch (e) { return reject(new Error(`Porta ${REDIRECT_PORT} em uso: ${e.message}`)); }
+            this._svc = new Gio.SocketService();
+            try { this._svc.add_inet_port(REDIRECT_PORT, null); }
+            catch (e) {
+                this._svc = null;
+                return reject(new Error(`Porta ${REDIRECT_PORT} em uso: ${e.message}`));
+            }
 
-            const tid = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 300, () => {
-                svc.stop(); svc.close();
+            this._tid = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 300, () => {
+                this._stopListener();
                 reject(new Error('Timeout OAuth (5 min)'));
                 return GLib.SOURCE_REMOVE;
             });
 
-            svc.connect('incoming', (_s, conn) => {
-                GLib.source_remove(tid);
-                const buf = new Uint8Array(4096);
-                conn.get_input_stream().read_async(buf, GLib.PRIORITY_DEFAULT, null, (_st, res) => {
+            this._svc.connect('incoming', (_s, conn) => {
+                if (this._tid !== null) { GLib.source_remove(this._tid); this._tid = null; }
+                const input = conn.get_input_stream();
+                input.read_bytes_async(4096, GLib.PRIORITY_DEFAULT, null, (_st, res) => {
                     try {
-                        const n   = conn.get_input_stream().read_finish(res);
-                        const req = new TextDecoder().decode(buf.subarray(0, n));
-                        const m   = req.match(/^GET \/?([^ ]*)/);
+                        const bytes = input.read_bytes_finish(res);
+                        const req   = new TextDecoder().decode(bytes.get_data());
+                        const m     = req.match(/^GET \/?([^ ]*)/);
                         if (!m) throw new Error('Requisição HTTP inválida');
-                        const qs = new URLSearchParams(m[1].replace(/^\?/, ''));
-                        if (qs.get('state') !== this._state) throw new Error('State inválido (CSRF)');
-                        const code = qs.get('code');
+                        const qs = parseQueryString(m[1]);
+                        if (qs['state'] !== this._state) throw new Error('State inválido (CSRF)');
+                        const code = qs['code'];
                         if (!code) throw new Error('Sem código na resposta');
 
                         const body = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
@@ -133,28 +154,31 @@ color:#58a6ff;margin-bottom:.5rem}.sub{opacity:.6;font-size:.95rem}</style></hea
 </div></body></html>`;
                         const resp = `HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n` +
                             `Content-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`;
-                        const out = conn.get_output_stream();
-                        const enc = new TextEncoder().encode(resp);
-                        out.write_async(enc, GLib.PRIORITY_DEFAULT, null, (_o, wr) => {
-                            out.write_finish(wr); out.close(null);
-                            conn.close(null); svc.stop(); svc.close();
+                        const out       = conn.get_output_stream();
+                        const respBytes = new GLib.Bytes(new TextEncoder().encode(resp));
+                        out.write_bytes_async(respBytes, GLib.PRIORITY_DEFAULT, null, (_o, wr) => {
+                            try { out.write_bytes_finish(wr); } catch (_) {}
+                            try { out.close(null); }           catch (_) {}
+                            try { conn.close(null); }          catch (_) {}
+                            this._stopListener();
                             resolve(code);
                         });
-                    } catch (e) { svc.stop(); svc.close(); reject(e); }
+                    } catch (e) { this._stopListener(); reject(e); }
                 });
+                return true;
             });
-            svc.start();
+            this._svc.start();
         });
     }
 
     async _exchangeCode(code) {
-        const tokens = await this._postToken(new URLSearchParams({
+        const tokens = await this._postToken(buildQueryString({
             code, client_id: this._settings.get_string('client-id'),
             client_secret:   this._settings.get_string('client-secret'),
             redirect_uri:    REDIRECT_URI,
             grant_type:      'authorization_code',
             code_verifier:   this._verifier,
-        }).toString());
+        }));
         await this._storeTokens(tokens);
     }
 
@@ -175,10 +199,12 @@ color:#58a6ff;margin-bottom:.5rem}.sub{opacity:.6;font-size:.95rem}</style></hea
         msg.set_request_body_from_bytes('application/x-www-form-urlencoded',
             new GLib.Bytes(new TextEncoder().encode(body)));
         const stream = await this._session.send_async(msg, GLib.PRIORITY_DEFAULT, null);
+        const bytes  = await stream.read_bytes_async(65536, GLib.PRIORITY_DEFAULT, null);
+        const text   = new TextDecoder().decode(bytes.get_data());
+        let data;
+        try { data = JSON.parse(text); } catch (_) { data = {}; }
         if (msg.get_status() !== Soup.Status.OK)
-            throw new Error(`HTTP ${msg.get_status()} no endpoint de token`);
-        const bytes = await stream.read_bytes_async(65536, GLib.PRIORITY_DEFAULT, null);
-        const data  = JSON.parse(new TextDecoder().decode(bytes.get_data()));
+            throw new Error(`HTTP ${msg.get_status()}: ${data.error ?? text} — ${data.error_description ?? ''}`);
         if (data.error) throw new Error(`${data.error}: ${data.error_description}`);
         return data;
     }

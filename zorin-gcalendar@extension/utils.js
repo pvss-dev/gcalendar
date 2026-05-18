@@ -1,7 +1,7 @@
 /**
  * utils.js — Helpers compartilhados (sem imports do Shell, seguro em prefs.js também)
  */
-'use strict';
+import GLib from 'gi://GLib';
 
 export function formatTime(dateTimeStr) {
     if (!dateTimeStr) return '';
@@ -37,13 +37,40 @@ export function randomString(len = 64) {
 }
 
 export function sha256Base64Url(str) {
-    const { GLib } = imports.gi;
     const hex   = GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, str, -1);
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < bytes.length; i++)
-        bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    return btoa(String.fromCharCode(...bytes))
+    const bytes = [];
+    for (let i = 0; i < hex.length; i += 2)
+        bytes.push(parseInt(hex.slice(i, i + 2), 16));
+    return GLib.base64_encode(bytes)
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+export function buildQueryString(obj) {
+    return Object.entries(obj)
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+        .join('&');
+}
+
+export function parseQueryString(str) {
+    const result = {};
+    for (const part of str.replace(/^\?/, '').split('&')) {
+        const idx = part.indexOf('=');
+        if (idx === -1) continue;
+        result[decodeURIComponent(part.slice(0, idx))] = decodeURIComponent(part.slice(idx + 1));
+    }
+    return result;
+}
+
+/**
+ * Converte string de data da Google Calendar API em Date local.
+ * Strings date-only ("YYYY-MM-DD") são UTC midnight sem isso — erradas em UTC-3.
+ * Appending T00:00:00 força parse como hora local (ECMAScript §20.4.1.15).
+ */
+export function parseDateLocal(value) {
+    if (!value) return new Date(NaN);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value))
+        return new Date(value + 'T00:00:00');
+    return new Date(value);
 }
 
 export function eventStart(ev) {

@@ -2,6 +2,7 @@
  * eventManager.js — Cache local, loop de sync, facade CRUD
  */
 import GLib from 'gi://GLib';
+import { parseDateLocal } from './utils.js';
 
 export class EventManager {
     constructor(api, settings, onChanged) {
@@ -39,7 +40,7 @@ export class EventManager {
     getEventsForDay(date) {
         return this._events.filter(ev => {
             const { value } = eventStart(ev);
-            const s = new Date(value);
+            const s = parseDateLocal(value);
             return s.getFullYear() === date.getFullYear() &&
                    s.getMonth()    === date.getMonth()    &&
                    s.getDate()     === date.getDate();
@@ -51,7 +52,7 @@ export class EventManager {
         const set = new Set();
         for (const ev of this._events) {
             const { value } = eventStart(ev);
-            const d = new Date(value);
+            const d = parseDateLocal(value);
             set.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
         }
         return set;

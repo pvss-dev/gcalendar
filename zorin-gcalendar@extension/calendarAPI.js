@@ -2,7 +2,12 @@
  * calendarAPI.js — Wrapper da Google Calendar REST API v3
  */
 import GLib from 'gi://GLib';
+import Gio  from 'gi://Gio';
 import Soup from 'gi://Soup';
+import { buildQueryString } from './utils.js';
+
+Gio._promisify(Soup.Session.prototype,    'send_async',       'send_finish');
+Gio._promisify(Gio.InputStream.prototype, 'read_bytes_async', 'read_bytes_finish');
 
 const BASE = 'https://www.googleapis.com/calendar/v3';
 
@@ -48,7 +53,7 @@ export class CalendarAPI {
 
     /* ── HTTP ── */
     async _get(path, p={}) {
-        const qs = new URLSearchParams(p).toString();
+        const qs = buildQueryString(p);
         return this._req('GET', `${BASE}${path}${qs?'?'+qs:''}`);
     }
     async _post(path, body)  { return this._req('POST',  `${BASE}${path}`, body); }
