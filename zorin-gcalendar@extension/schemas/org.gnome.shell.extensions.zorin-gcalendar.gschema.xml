@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.zorin-gcalendar"
+          path="/org/gnome/shell/extensions/zorin-gcalendar/">
+
+    <!-- OAuth credentials -->
+    <key name="client-id"     type="s"><default>''</default></key>
+    <key name="client-secret" type="s"><default>''</default></key>
+    <key name="access-token"  type="s"><default>''</default></key>
+    <key name="refresh-token" type="s"><default>''</default></key>
+    <key name="token-expiry"  type="x"><default>0</default></key>
+
+    <!-- Widget position (pixels from top-left of primary monitor) -->
+    <key name="widget-x" type="i">
+      <default>40</default>
+      <summary>Widget X position</summary>
+    </key>
+    <key name="widget-y" type="i">
+      <default>60</default>
+      <summary>Widget Y position</summary>
+    </key>
+
+    <!-- Widget appearance -->
+    <key name="widget-opacity" type="i">
+      <default>92</default>
+      <summary>Widget background opacity (0–100)</summary>
+    </key>
+
+    <!-- Behaviour -->
+    <key name="sync-interval" type="i">
+      <default>5</default>
+      <summary>Sync interval in minutes (1–60)</summary>
+    </key>
+    <key name="days-ahead" type="i">
+      <default>30</default>
+      <summary>Days ahead to fetch events</summary>
+    </key>
+    <key name="notification-minutes-before" type="i">
+      <default>10</default>
+      <summary>Minutes before event for notification</summary>
+    </key>
+    <key name="enabled-calendars" type="as">
+      <default>[]</default>
+      <summary>Enabled calendar IDs (empty = all)</summary>
+    </key>
+    <key name="last-sync" type="x">
+      <default>0</default>
+    </key>
+  </schema>
+</schemalist>

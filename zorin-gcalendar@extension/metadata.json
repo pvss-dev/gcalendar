@@ -1,0 +1,16 @@
+{
+  "name": "Zorin GCalendar Widget",
+  "description": "Widget flutuante do Google Calendar para a \u00e1rea de trabalho do Zorin OS 18. Exibe um mini-calend\u00e1rio e lista de eventos diretamente no desktop, com suporte a OAuth, m\u00faltiplos calend\u00e1rios e arrastar para reposicionar.",
+  "uuid": "zorin-gcalendar@extension",
+  "shell-version": [
+    "43",
+    "44",
+    "45",
+    "46",
+    "47"
+  ],
+  "version": 1,
+  "url": "https://github.com/yourusername/zorin-gcalendar",
+  "settings-schema": "org.gnome.shell.extensions.zorin-gcalendar",
+  "gettext-domain": "zorin-gcalendar"
+}

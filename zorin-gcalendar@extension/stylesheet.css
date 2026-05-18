@@ -1,0 +1,290 @@
+/* =================================================================
+   stylesheet.css — Zorin GCalendar Desktop Widget
+   Design: glassmorfismo sutil sobre qualquer papel de parede.
+   Compatível com tema claro e escuro do Zorin OS 18.
+   ================================================================= */
+
+/* ── Container principal ─────────────────────────────────────── */
+.gcal-widget {
+    background-color: rgba(28, 28, 36, 0.88);
+    border:           1px solid rgba(255, 255, 255, 0.10);
+    border-radius:    20px;
+
+    /* Sombra para destacar sobre o papel de parede */
+    box-shadow:
+        0 8px 32px  rgba(0, 0, 0, 0.45),
+        0 2px  8px  rgba(0, 0, 0, 0.25),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+    /* Efeito de blur via backdrop-filter (suporte experimental no GNOME) */
+    -st-backdrop-filter: blur(24px);
+
+    padding-bottom: 4px;
+    min-width: 340px;
+    max-width: 340px;
+}
+
+/* ── Cabeçalho ───────────────────────────────────────────────── */
+.gcal-w-header {
+    padding:       12px 14px 10px;
+    spacing:       4px;
+    border-radius: 20px 20px 0 0;
+    cursor:        move;          /* indica que é arrastável */
+}
+
+.gcal-w-month-label {
+    font-size:   1.0em;
+    font-weight: 700;
+    color:       rgba(255, 255, 255, 0.92);
+    background:  none;
+    border:      none;
+    padding:     4px 6px;
+    border-radius: 6px;
+    x-align:     center;
+    transition-duration: 150ms;
+}
+.gcal-w-month-label:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.gcal-w-nav-btn {
+    background:    none;
+    border:        none;
+    border-radius: 8px;
+    font-size:     1.4em;
+    font-weight:   300;
+    color:         rgba(255, 255, 255, 0.70);
+    padding:       2px 10px;
+    transition-duration: 120ms;
+}
+.gcal-w-nav-btn:hover { background: rgba(255,255,255,0.10); color: #fff; }
+.gcal-w-nav-btn:active { background: rgba(255,255,255,0.18); }
+
+.gcal-w-ctrl-btn {
+    background:    none;
+    border:        none;
+    border-radius: 7px;
+    font-size:     0.88em;
+    color:         rgba(255, 255, 255, 0.45);
+    padding:       4px 7px;
+    transition-duration: 120ms;
+}
+.gcal-w-ctrl-btn:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.80); }
+
+/* ── Área do mini-calendário ─────────────────────────────────── */
+.gcal-w-cal-area {
+    padding:  0 10px 6px;
+    spacing:  0;
+}
+
+.gcal-w-cal-row {
+    spacing: 0;
+}
+
+/* Cabeçalho dos dias da semana (D S T Q Q S S) */
+.gcal-w-dow {
+    width:       40px;
+    height:      28px;
+    font-size:   0.72em;
+    font-weight: 600;
+    color:       rgba(255, 255, 255, 0.35);
+    text-align:  center;
+    x-align:     center;
+    y-align:     center;
+}
+
+/* Célula de dia */
+.gcal-w-day-cell {
+    width:         40px;
+    height:        40px;
+    font-size:     0.88em;
+    color:         rgba(255, 255, 255, 0.75);
+    background:    none;
+    border:        none;
+    border-radius: 50%;
+    transition-duration: 120ms;
+    text-align:    center;
+    x-align:       center;
+    y-align:       center;
+}
+.gcal-w-day-cell:hover {
+    background: rgba(255, 255, 255, 0.10);
+    color:      #fff;
+}
+.gcal-w-day-cell:focus {
+    outline: none;
+}
+
+/* Hoje */
+.gcal-w-today {
+    color:       #3584e4;
+    font-weight: 700;
+}
+
+/* Dia selecionado */
+.gcal-w-selected {
+    background: #3584e4 !important;
+    color:      #ffffff !important;
+    font-weight: 700;
+}
+.gcal-w-selected:hover {
+    background: #1c71d8 !important;
+}
+
+/* Ponto de eventos abaixo do número — via box-shadow simulado */
+.gcal-w-has-event {
+    /* Pequeno dot laranja embaixo do número via border-bottom highlight */
+    border-bottom: 2.5px solid #f9a825;
+    border-radius: 50% 50% 45% 45%;
+}
+.gcal-w-selected.gcal-w-has-event {
+    border-bottom: 2.5px solid rgba(255,255,255,0.6);
+}
+
+/* ── Separador ───────────────────────────────────────────────── */
+.gcal-w-sep {
+    height:           1px;
+    background-color: rgba(255, 255, 255, 0.08);
+    margin:           2px 14px 0;
+}
+
+/* ── Lista de eventos ────────────────────────────────────────── */
+.gcal-w-event-scroll {
+    max-height: 220px;
+}
+
+.gcal-w-event-list {
+    padding:  8px 12px 4px;
+    spacing:  2px;
+}
+
+/* Cabeçalho da data selecionada */
+.gcal-w-date-hdr {
+    font-size:   0.73em;
+    font-weight: 700;
+    color:       rgba(255, 255, 255, 0.40);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    padding:     0 2px 6px;
+}
+
+/* Estado vazio */
+.gcal-w-empty {
+    font-size: 0.85em;
+    color:     rgba(255, 255, 255, 0.35);
+    padding:   12px 2px;
+    font-style: italic;
+}
+
+/* Linha de evento */
+.gcal-w-ev-row {
+    border-radius: 10px;
+    padding:       7px 8px 7px 6px;
+    spacing:       10px;
+    transition-duration: 120ms;
+}
+.gcal-w-ev-row:hover {
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.gcal-w-ev-strip {
+    width:         4px;
+    min-height:    34px;
+    border-radius: 2px;
+}
+
+.gcal-w-ev-title {
+    font-size:   0.88em;
+    font-weight: 600;
+    color:       rgba(255, 255, 255, 0.90);
+}
+
+.gcal-w-ev-meta {
+    font-size: 0.75em;
+    color:     rgba(255, 255, 255, 0.45);
+    margin-top: 2px;
+}
+
+.gcal-w-ev-open {
+    background:    none;
+    border:        none;
+    font-size:     1em;
+    color:         rgba(255, 255, 255, 0.30);
+    border-radius: 6px;
+    padding:       2px 6px;
+    transition-duration: 120ms;
+}
+.gcal-w-ev-open:hover {
+    background: rgba(255, 255, 255, 0.10);
+    color:      rgba(255, 255, 255, 0.85);
+}
+
+/* ── Login ───────────────────────────────────────────────────── */
+.gcal-w-signin {
+    padding: 18px 4px 10px;
+    spacing: 12px;
+}
+.gcal-w-signin-lbl {
+    font-size:  0.87em;
+    color:      rgba(255,255,255,0.55);
+    text-align: center;
+}
+.gcal-w-signin-btn {
+    background:    #3584e4;
+    color:         #ffffff;
+    border:        none;
+    border-radius: 10px;
+    padding:       9px 20px;
+    font-size:     0.88em;
+    font-weight:   600;
+    transition-duration: 150ms;
+}
+.gcal-w-signin-btn:hover  { background: #1c71d8; }
+.gcal-w-signin-btn:active { background: #1a5fb4; }
+
+/* ── Rodapé ──────────────────────────────────────────────────── */
+.gcal-w-footer {
+    padding:       4px 14px 10px;
+    spacing:       0;
+}
+.gcal-w-sync-label {
+    font-size: 0.70em;
+    color:     rgba(255, 255, 255, 0.25);
+}
+.gcal-w-new-btn {
+    background:    none;
+    border:        1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    color:         rgba(255, 255, 255, 0.55);
+    font-size:     0.80em;
+    padding:       4px 12px;
+    transition-duration: 150ms;
+}
+.gcal-w-new-btn:hover {
+    border-color: rgba(53, 132, 228, 0.60);
+    color:        #3584e4;
+    background:   rgba(53, 132, 228, 0.08);
+}
+
+/* ── Tela de setup (client-id não configurado) ─────────────── */
+.gcal-w-setup-icon {
+    font-size: 2.2em;
+    text-align: center;
+    padding: 8px 0 4px;
+}
+.gcal-w-setup-title {
+    font-size: 0.93em;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.75);
+    text-align: center;
+    padding-bottom: 4px;
+}
+
+/* Status de login (mensagens de erro/progresso) */
+.gcal-w-signin-status {
+    font-size: 0.75em;
+    color: rgba(255, 180, 0, 0.80);
+    text-align: center;
+    padding-top: 6px;
+    min-height: 16px;
+}
