@@ -72,9 +72,9 @@
     padding: 2px 0;
 }
 
-/* Altura fixa da linha: é o que impede a grade de mudar de tamanho conforme
-   o mês. As 6 linhas existem sempre (meses de 5 semanas ganham uma linha de
-   preenchimento), então a área dos dias mede o mesmo em qualquer mês. */
+/* A altura efetiva vem de MonthGrid._applyFixedHeight(), que fixa a altura do
+   ator: `height` aqui é só uma preferência, e o conteúdo da célula consegue
+   superá-la. As 6 linhas repartem a altura fixa igualmente (y_expand). */
 .gcal-grid-row {
     spacing: 1px;
     height: 40px;
@@ -118,13 +118,12 @@
 }
 .gcal-grid-day-selected:hover { background-color: #4a90e8; }
 
-/* Altura reservada mesmo sem eventos: a faixa nunca é ocultada, senão a
-   célula (e a linha inteira) encolheria nos dias sem evento. */
+/* Os marcadores ficam sobrepostos ao número (BinLayout), alinhados à base da
+   célula. Por não estarem no fluxo vertical, não alteram a altura do conteúdo
+   — com ou sem eventos a célula mede exatamente o mesmo. */
 .gcal-grid-dots {
-    height: 7px;
     spacing: 2px;
-    padding-top: 2px;
-    text-align: center;
+    padding-bottom: 1px;
 }
 
 .gcal-grid-dot {

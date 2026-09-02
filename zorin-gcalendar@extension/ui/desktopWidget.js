@@ -270,6 +270,14 @@ class DesktopWidget extends St.Widget {
             'minimize', 'unminimize'])
             this._connect(global.window_manager, signal, onStackChanged);
 
+        this._connect(this, 'notify::height', () => {
+            const height = Math.round(this.height);
+            if (height !== this._loggedHeight) {
+                this._loggedHeight = height;
+                Log.info(`altura do widget: ${height}px`);
+            }
+        });
+
         this._connect(this, 'key-press-event', this._onKeyPress.bind(this));
         this._connect(this, 'captured-event', this._onCapturedEvent.bind(this));
     }

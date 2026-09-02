@@ -188,6 +188,11 @@ do_diagnose() {
         echo "  (só disponível no X11)"
     fi
     echo
+    echo "── alturas medidas (journal) ──"
+    journalctl --user -b 0 -o cat 2>/dev/null \
+        | grep -E 'altura (da grade|do widget)' | tail -12 \
+        || echo "  (nenhuma)"
+    echo
     echo "── decisões de região de entrada (journal) ──"
     journalctl --user -b 0 -o cat 2>/dev/null \
         | grep -E 'região de entrada|habilitada — build' | tail -15 \

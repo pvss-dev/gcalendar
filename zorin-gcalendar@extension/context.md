@@ -208,17 +208,27 @@ decisões que se apoiam umas nas outras:
    semanas ganham linhas de preenchimento com dias dos meses vizinhos, em vez
    de a grade encolher. Testado para todos os meses de 2024–2027, com semana
    começando no domingo e na segunda.
-2. **Altura fixa na linha** (`.gcal-grid-row { height: 40px }`), em CSS e não
-   em pixels no JS, para acompanhar o fator de escala em telas HiDPI.
-3. **Geometria constante da célula.** Duas armadilhas sutis, ambas já
-   observadas na prática:
-   * a faixa de marcadores (`.gcal-grid-dots`) tem altura reservada e **nunca é
-     ocultada** — escondê-la nos dias sem evento encolhia a célula, logo a
-     linha, logo a grade; e como os dias com evento caem em linhas diferentes a
-     cada mês, o calendário mudava de tamanho ao navegar;
-   * todas as células têm `border: 1px solid transparent`, e o dia de hoje só
-     troca `border-color`. Aplicar a borda apenas em "hoje" deixava aquela
-     linha mais alta que as outras — e "hoje" muda de linha a cada mês.
+2. **Altura fixada no ator**, em `MonthGrid._applyFixedHeight()`:
+   `set_height((HEADER_HEIGHT + 6 * ROW_HEIGHT) * scaleFactor)`.
+
+   > **`height` no CSS do St não fixa a altura.** É uma *preferência*, e o
+   > conteúdo da célula consegue superá-la — foi por isso que `.gcal-grid-row
+   > { height: 40px }` sozinho não resolveu o problema. `set_height()` é um
+   > pedido de tamanho fixo, esse sim respeitado pelo Clutter. Como o valor vai
+   > em pixels, é multiplicado pelo `scale_factor` do `St.ThemeContext` e
+   > recalculado em `notify::scale-factor` (HiDPI).
+
+   As 6 linhas têm `y_expand: true` e repartem essa altura igualmente.
+3. **Marcadores fora do fluxo vertical.** A faixa de pontos fica *sobreposta*
+   ao número, via `Clutter.BinLayout` com `y_align: END`, em vez de empilhada
+   abaixo dele. Assim ela não soma altura ao conteúdo. É o mesmo princípio do
+   calendário do próprio Shell, que marca "dia com eventos" com
+   `background-image` — um marcador que, por definição, não participa do
+   layout.
+4. **Geometria constante da célula.** Todas têm `border: 1px solid
+   transparent`, e o dia de hoje só troca `border-color`. Aplicar a borda
+   apenas em "hoje" deixava aquela linha mais alta que as outras — e "hoje"
+   muda de linha a cada mês.
 
 ## Arrastar
 

@@ -10,12 +10,17 @@ import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
 import Shell from 'gi://Shell';
 
+import * as Log from '../lib/log.js';
 import {dayKey, sameDay, weekdayAbbreviations, safeColour} from '../lib/utils.js';
 import {
-    GRID_ROWS as ROWS, GRID_COLS as COLS, monthGridDates, isInDisplayedMonth,
+    GRID_ROWS, GRID_COLS as COLS, monthGridDates, isInDisplayedMonth,
 } from '../lib/monthLayout.js';
 
 const MAX_DOTS = 3;
+
+// Alturas lógicas (px do CSS, multiplicadas pelo fator de escala em HiDPI).
+const HEADER_HEIGHT = 22;
+const ROW_HEIGHT = 40;
 
 export const MonthGrid = GObject.registerClass({
     Signals: {
@@ -34,10 +39,47 @@ export const MonthGrid = GObject.registerClass({
 
         this._buildHeader();
         this._buildCells();
+
+        // A altura da grade é fixada no ator, não deixada para o CSS: a
+        // propriedade `height` do St é apenas uma preferência que o conteúdo
+        // da célula ainda consegue superar — foi por isso que meses com mais
+        // dias marcados continuavam mais altos. set_height() é um pedido de
+        // tamanho fixo, que o Clutter respeita.
+        this._themeContext = St.ThemeContext.get_for_stage(global.stage);
+        this._scaleId = this._themeContext.connect('notify::scale-factor',
+            () => this._applyFixedHeight());
+        this.connect('destroy', () => {
+            if (this._scaleId) {
+                this._themeContext.disconnect(this._scaleId);
+                this._scaleId = 0;
+            }
+        });
+        this._applyFixedHeight();
+
+        // Se a altura da grade mudar depois de fixada, é regressão: registra
+        // para aparecer em `./install.sh --diagnose`. Com tudo certo, isto
+        // aparece uma única vez, logo após a primeira alocação.
+        this.connect('notify::height', () => {
+            const height = Math.round(this.height);
+            if (height !== this._loggedHeight) {
+                this._loggedHeight = height;
+                Log.info(`altura da grade: ${height}px`);
+            }
+        });
+    }
+
+    /** Altura idêntica em todo mês: cabeçalho + 6 linhas, sempre. */
+    _applyFixedHeight() {
+        const scale = this._themeContext.scale_factor;
+        this._header.set_height(HEADER_HEIGHT * scale);
+        this.set_height((HEADER_HEIGHT + GRID_ROWS * ROW_HEIGHT) * scale);
+        Log.debug(`grade fixada em ${(HEADER_HEIGHT + GRID_ROWS * ROW_HEIGHT) * scale}px ` +
+            `(escala ${scale})`);
     }
 
     _buildHeader() {
         const header = new St.BoxLayout({style_class: 'gcal-grid-header'});
+        this._header = header;
         for (const abbr of weekdayAbbreviations(this._weekStart)) {
             header.add_child(new St.Label({
                 text: abbr,
@@ -49,14 +91,37 @@ export const MonthGrid = GObject.registerClass({
     }
 
     _buildCells() {
-        for (let row = 0; row < ROWS; row++) {
-            const rowBox = new St.BoxLayout({style_class: 'gcal-grid-row'});
+        for (let row = 0; row < GRID_ROWS; row++) {
+            // y_expand faz as 6 linhas repartirem igualmente a altura fixa da
+            // grade, em vez de cada uma pedir a altura do seu conteúdo.
+            const rowBox = new St.BoxLayout({
+                style_class: 'gcal-grid-row',
+                y_expand: true,
+            });
             for (let col = 0; col < COLS; col++) {
                 const index = row * COLS + col;
 
-                const label = new St.Label({style_class: 'gcal-grid-day-number'});
-                const dots = new St.BoxLayout({style_class: 'gcal-grid-dots'});
-                const content = new St.BoxLayout({vertical: true, x_expand: true});
+                const label = new St.Label({
+                    style_class: 'gcal-grid-day-number',
+                    x_expand: true,
+                    y_align: Clutter.ActorAlign.CENTER,
+                });
+                const dots = new St.BoxLayout({
+                    style_class: 'gcal-grid-dots',
+                    x_align: Clutter.ActorAlign.CENTER,
+                    y_align: Clutter.ActorAlign.END,
+                });
+
+                // BinLayout empilha em vez de somar: os marcadores ficam
+                // sobrepostos ao número, na base da célula, e por isso nunca
+                // aumentam a altura do conteúdo. É o mesmo princípio do
+                // calendário do próprio Shell, que usa background-image para
+                // marcar "dia com eventos" — marcador que não entra no layout.
+                const content = new St.Widget({
+                    layout_manager: new Clutter.BinLayout(),
+                    x_expand: true,
+                    y_expand: true,
+                });
                 content.add_child(label);
                 content.add_child(dots);
 
