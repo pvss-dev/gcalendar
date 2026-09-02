@@ -1,250 +1,262 @@
-# Zorin GCalendar — Contexto do Projeto para Claude Code
+# Zorin GCalendar — documentação do projeto
 
-## Resumo do projeto
+Widget de calendário na área de trabalho do GNOME Shell, integrado ao Google
+Agenda. Alvo verificado: **Zorin OS 18.1 / GNOME Shell 46 / GJS 1.80**.
 
-Extensão GNOME Shell que exibe um widget flutuante na área de trabalho do Zorin OS 18
-com mini-calendário e eventos do Google Calendar. Usa OAuth 2.0 PKCE para autenticação.
-
-**UUID:** `zorin-gcalendar@extension`  
-**Caminho instalado:** `~/.local/share/gnome-shell/extensions/zorin-gcalendar@extension/`  
-**GNOME Shell alvo:** 43, 44, 45, 46, 47  
-**Linguagem:** JavaScript (GJS — SpiderMonkey), ES Modules (import/export)
+**UUID:** `zorin-gcalendar@extension`
+**Instalado em:** `~/.local/share/gnome-shell/extensions/zorin-gcalendar@extension/`
+**Versões do Shell suportadas:** 46 e 47 (ES Modules + classe `Extension`)
 
 ---
 
-## Estrutura de arquivos
+## Por que 46/47, e não 43–47
 
-```
-zorin-gcalendar@extension/
-├── metadata.json          Manifesto da extensão (uuid, shell-version, settings-schema)
-├── extension.js           Entry point: instancia todos os módulos, gerencia lifecycle
-├── desktopWidget.js       Widget flutuante (St.BoxLayout) — mini-calendário + lista de eventos
-├── googleAuth.js          OAuth 2.0 PKCE: abre browser, escuta localhost:9004, troca code por tokens
-├── calendarAPI.js         Wrapper REST da Google Calendar API v3 (libsoup3)
-├── eventManager.js        Cache local de eventos, loop de sync (GLib.timeout), CRUD facade
-├── notifications.js       Gio.Notification para eventos iminentes
-├── prefs.js               Janela de preferências GTK4/Adwaita (roda em processo separado)
-├── utils.js               Helpers puros: formatação de datas, PKCE crypto, cores do Google
-├── stylesheet.css         Estilos do widget (glassmorfismo escuro)
-├── icons/
-│   └── calendar-symbolic.svg
-└── schemas/
-    └── org.gnome.shell.extensions.zorin-gcalendar.gschema.xml
-```
+A versão 1 declarava `"shell-version": ["43","44","45","46","47"]`, mas o código
+usa `import`/`export` e `export default class extends Extension`, que só existem
+a partir do **GNOME 45**. Em 43/44 a extensão nem carregaria.
+
+Duas APIs foram verificadas contra o Shell instalado, não presumidas:
+
+| API | Situação no Shell 46 | Consequência |
+|---|---|---|
+| `St.BoxLayout` | **não tem** a propriedade `orientation`, só `vertical` | usar `orientation:` quebraria o layout — mantivemos `vertical: true` |
+| `St.ScrollView` | usa a propriedade `child:` (introduzida no 46) | é o que impede declarar suporte ao 45 |
+| `MessageTray` | `Source`/`Notification` com construtor de propriedades + `addNotification()` | a API antiga (`new Source(title, icon)`) não existe mais |
 
 ---
 
-## Estado atual — o que já funciona
+## Arquitetura
 
-- [x] Widget aparece na área de trabalho via `Main.layoutManager.addChrome()`
-- [x] Mini-calendário navegável (mês anterior/próximo)
-- [x] Clique no dia mostra eventos daquele dia
-- [x] Dias com eventos marcados com ponto laranja
-- [x] Widget arrastável pelo cabeçalho, posição salva em GSettings
-- [x] Tela de "configure credenciais" quando client-id está vazio
-- [x] Tela de "Entrar com Google" depois de configurar credenciais nas prefs
-- [x] `extension.js` observa mudanças em `client-id`, `client-secret` e `refresh-token`
-  para atualizar o widget automaticamente sem reiniciar o Shell
-- [x] Login OAuth: abre browser, escuta redirect em `localhost:9004`
-- [x] Tokens armazenados no GNOME Keyring (libsecret)
-- [x] Sync periódico configurável
-- [x] Notificações GNOME para eventos iminentes
-- [x] Janela de preferências (prefs.js) com GTK4/Adwaita
+Três camadas, sem atalhos entre elas: a UI nunca fala HTTP, e a camada de
+transporte nunca sabe o que é "dia selecionado".
+
+```
+extension.js                    ciclo de vida + composition root
+│
+├── lib/                        domínio e infraestrutura (sem St/Clutter)
+│   ├── log.js                  logging (GCAL_DEBUG=1 para detalhes)
+│   ├── errors.js               tipos de erro + mensagem ao usuário
+│   ├── utils.js                datas, fusos, PKCE, cores — puro
+│   ├── eventFormat.js          textos e validação de formulário — puro
+│   ├── async.js                TimerPool: nenhum GLib source sem dono
+│   ├── http.js                 libsoup3 + Gio._promisify centralizado
+│   ├── secretStore.js          GNOME Keyring (libsecret)
+│   ├── googleAuth.js           OAuth 2.0 PKCE + loopback em porta efêmera
+│   ├── googleCalendarApi.js    REST v3: paginação, retry, 401 → renova token
+│   ├── calendarService.js  ←── camada de abstração: JSON do Google → domínio
+│   └── eventStore.js           estado, índice por dia, cache, laço de sync
+│
+└── ui/                         só apresentação
+    ├── desktopWidget.js        composição, posicionamento, arraste
+    ├── monthGrid.js            grade 6×7 reaproveitada entre renderizações
+    ├── eventList.js            eventos do dia + estados (erro, login, vazio)
+    └── eventDialog.js          criar / editar / excluir
+```
+
+**Fluxo de dados:** `EventStore` é a única fonte de verdade da UI. Ele emite os
+sinais GObject `changed` e `status-changed`; o widget só reage. Nenhuma view
+chama a API diretamente.
+
+**Modelo de evento** (o que a UI enxerga — nunca o JSON do Google):
+
+```js
+{id, calendarId, calendarName, etag, title, description, location,
+ start: Date, end: Date, allDay, colour, htmlLink,
+ recurringEventId, isRecurring, readOnly, dayKeys: ['YYYY-MM-DD', …]}
+```
+
+`dayKeys` lista **todos** os dias que o evento ocupa, e é o que faz um evento de
+terça a quinta aparecer nos três dias.
 
 ---
 
-## BUG ATUAL A CORRIGIR — `btoa is not defined`
+## Autenticação
 
-### Erro exato
-```
-Erro: btoa is not defined
-```
+Fluxo **Authorization Code + PKCE** (RFC 7636) com redirecionamento de loopback
+(RFC 8252 §7.3) — o recomendado para aplicativos nativos.
 
-### Quando ocorre
-Ao clicar em "Entrar com Google" no widget. O erro acontece em `utils.js`
-na função `sha256Base64Url()`, chamada por `googleAuth.js` durante o
-início do fluxo OAuth PKCE.
+* Uma extensão do Shell não tem back-end, então **não existe segredo de
+  verdade**: o "client secret" de um cliente tipo *Desktop app* é público por
+  definição. Quem protege o fluxo é o PKCE.
+* O redirect usa `http://127.0.0.1:<porta efêmera>`. A porta é escolhida pelo
+  sistema a cada login (`add_any_inet_port`); a versão 1 fixava a 9004 e falhava
+  para sempre se algo mais a ocupasse.
+* `code_verifier` e `state` vêm de `/dev/urandom`, não de `Math.random()`.
 
-### Causa raiz
-`btoa()` é uma API Web (browser). O GJS (SpiderMonkey embutido no GNOME Shell)
-**não implementa `btoa`** — ele fornece apenas as APIs GLib/GIO, não as Web APIs.
+**Escopos pedidos** (menor privilégio possível para as funções existentes):
 
-### Localização exata do bug
+| Escopo | Para quê |
+|---|---|
+| `.../auth/calendar.events` | criar, editar e excluir eventos |
+| `.../auth/calendar.readonly` | listar as agendas do usuário |
 
-**Arquivo:** `utils.js`, linha ~45
+Deliberadamente **não** pedimos `.../auth/calendar`, que também permitiria criar
+e apagar agendas inteiras e alterar ACLs.
 
-```javascript
-// CÓDIGO ATUAL — QUEBRADO (btoa não existe no GJS)
-export function sha256Base64Url(str) {
-    const { GLib } = imports.gi;
-    const hex   = GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, str, -1);
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < bytes.length; i++)
-        bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    return btoa(String.fromCharCode(...bytes))   // ← AQUI: btoa não existe no GJS
-        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-```
+**Onde cada coisa é guardada:**
 
----
+| Dado | Local | Motivo |
+|---|---|---|
+| Client ID | GSettings (dconf) | não é segredo |
+| Client Secret | **GNOME Keyring** | dconf é texto claro |
+| Refresh token | **GNOME Keyring** | idem |
+| Access token | **só em memória** | dura ~1h; renovado a partir do refresh token |
 
-## CORREÇÃO NECESSÁRIA
-
-### O que mudar em `utils.js`
-
-Substituir `btoa()` por `GLib.base64_encode()`, que é a API nativa do GLib
-disponível em qualquer versão do GJS:
-
-```javascript
-// CORREÇÃO — usar GLib.base64_encode() em vez de btoa()
-export function sha256Base64Url(str) {
-    // GLib.compute_checksum_for_string retorna hex digest do SHA-256
-    const hex   = GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, str, -1);
-
-    // Converter hex string → array de bytes
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < bytes.length; i++)
-        bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-
-    // GLib.base64_encode() aceita Uint8Array e retorna Base64 padrão (com +, /, =)
-    const b64 = GLib.base64_encode(bytes);
-
-    // Converter Base64 padrão → Base64-URL (requerido pelo RFC 7636 PKCE)
-    return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-```
-
-**Também remover o `imports.gi` legado** que está dentro da função — no GJS com
-ES Modules (`import GLib from 'gi://GLib'`) o GLib já está importado no topo do
-módulo que chamar essa função, mas `utils.js` não importa GLib. Então a função
-deve importar GLib diretamente:
-
-```javascript
-// Adicionar ao topo de utils.js (junto com os outros exports):
-import GLib from 'gi://GLib';
-```
-
-E remover a linha `const { GLib } = imports.gi;` de dentro da função.
-
-### Diff completo para `utils.js`
-
-**Linha a adicionar no topo do arquivo** (após o comentário, antes dos `export function`):
-```javascript
-import GLib from 'gi://GLib';
-```
-
-**Função `sha256Base64Url` — substituição completa:**
-
-DE:
-```javascript
-export function sha256Base64Url(str) {
-    const { GLib } = imports.gi;
-    const hex   = GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, str, -1);
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < bytes.length; i++)
-        bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    return btoa(String.fromCharCode(...bytes))
-        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-```
-
-PARA:
-```javascript
-export function sha256Base64Url(str) {
-    const hex   = GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, str, -1);
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < bytes.length; i++)
-        bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    // GLib.base64_encode substitui btoa() que não existe no GJS/SpiderMonkey
-    return GLib.base64_encode(bytes)
-        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-```
+Renovação: `getAccessToken()` renova sozinho perto do vencimento, e chamadas
+concorrentes compartilham uma única renovação. Um `401` dispara uma renovação
+forçada e uma única nova tentativa. `invalid_grant` (consentimento revogado)
+limpa o keyring e devolve a UI para a tela de login.
 
 ---
 
-## Outros problemas conhecidos (para corrigir depois)
+## Como configurar as credenciais
 
-### 1. `'use strict'` incompatível com ES Modules
-O arquivo `utils.js` tem `'use strict';` no topo. Em ES Modules (`import`/`export`),
-o modo strict é implícito — a diretiva não causa erro mas é redundante. Pode remover.
+1. <https://console.cloud.google.com> → crie um projeto.
+2. **APIs e serviços → Biblioteca** → ative a **Google Calendar API**.
+3. **Tela de permissão OAuth** → tipo *Externo* → adicione seu e-mail em
+   *Usuários de teste* (sem isso o Google recusa contas não verificadas).
+4. **Credenciais → Criar credenciais → ID do cliente OAuth** → tipo
+   **Aplicativo para computador**.
+5. Copie Client ID e Client Secret para `gnome-extensions prefs zorin-gcalendar@extension`.
 
-### 2. `TextDecoder` / `TextEncoder` podem não existir em GNOME 43
-Em GNOME 43 (Zorin OS 17), `TextDecoder` e `TextEncoder` podem não estar disponíveis.
-Alternativa GJS: `new GLib.Bytes(array)` e `ByteArray.toString()`.
-Verificar se o usuário está em Zorin OS 17 ou 18 antes de corrigir.
-
-### 3. `Secret.password_store` — API async mudou no GJS 45+
-Em GNOME 45+, o `Secret.password_store()` retorna uma Promise diretamente.
-Em versões anteriores precisa de callback. O código atual usa `await` diretamente,
-o que pode falhar em GNOME 43/44. Considerar wrapper com fallback.
-
-### 4. Widget some durante o Overview do GNOME
-`addChrome` com `trackFullscreen: true` some em tela cheia mas continua visível
-no Overview (visão de atividades). Pode ser desejável ou não — avaliar com o usuário.
+Não há credenciais no repositório, e não deve haver: cada instalação usa as suas.
 
 ---
 
-## Como testar após a correção
+## Camada do widget (`widget-layer`)
+
+| Valor | Como funciona |
+|---|---|
+| `desktop` (padrão) | dentro de `global.window_group`, acima do papel de parede **e das janelas de tipo DESKTOP**, atrás das janelas comuns |
+| `auto` | fica na camada de chrome (clique sempre chega) e simplesmente **some enquanto uma janela o sobrepõe** |
+| `top` | em `uiGroup`, acima de `global.window_group` — sempre visível |
+
+**Duas armadilhas de empilhamento**, ambas já custaram sessões de depuração:
+
+1. **O papel de parede está dentro de `window_group`**, rebaixado ao fundo
+   (`layout.js`: `set_child_below_sibling(this._backgroundGroup, null)`).
+   Descer o widget para baixo de `window_group` inteiro o esconde atrás do
+   papel de parede, não o coloca na área de trabalho.
+2. **O Zorin mantém uma janela "Desktop Icons" de tela inteira**
+   (`_NET_WM_WINDOW_TYPE_DESKTOP`, 1920x1080) no fundo da pilha de janelas.
+   Ela é transparente — o widget aparece normalmente — mas fica empilhada
+   *acima* de um ator colocado logo sobre o papel de parede, e aí fica com os
+   cliques daquela área. Por isso `_restack()` sobe o widget acima da janela
+   DESKTOP mais alta, não apenas acima do `_backgroundGroup`.
+
+O mutter reordena os atores de janela a cada `restacked` e não conhece o nosso,
+então a posição é reafirmada nesse sinal (além de `grab-op-end`, troca de área
+de trabalho e mudanças de tamanho).
+
+**X11 × Wayland.** A região de entrada do stage só existe no X11 —
+`_updateRegions()` a monta sob `!Meta.is_wayland_compositor()`. No X11 ela é o
+que decide se o clique chega ao Shell ou atravessa para a janela de baixo; no
+Wayland quem decide é a ordem dos atores. Isso torna o modo `desktop`
+estruturalmente mais frágil no X11: um ator abaixo da pilha de janelas disputa
+espaço com janelas X reais. O modo `auto` existe justamente para isso — parece
+um widget de área de trabalho sem depender dessa disputa.
+
+Para saber por que um clique não chegou:
 
 ```bash
-# 1. Instalar/reinstalar
-cd ~/zorin-gcalendar
-./install.sh
-
-# 2. Reiniciar o GNOME Shell
-#    Wayland: logout + login
-#    X11: Alt+F2 → "r" → Enter
-
-# 3. Ativar extensão
-gnome-extensions enable zorin-gcalendar@extension
-
-# 4. Configurar credenciais
-gnome-extensions prefs zorin-gcalendar@extension
-# → colar Client ID e Client Secret do Google Cloud Console
-
-# 5. Clicar "Entrar com Google" no widget
-#    Deve abrir o browser sem erro
-
-# 6. Ver logs em tempo real
-journalctl -f | grep GCalendar
+./install.sh --diagnose     # sessão, build em execução, janelas, decisões de input
+./install.sh --status       # o Shell já carregou a versão instalada?
 ```
+
+A extensão registra no journal cada mudança de região de entrada, com a janela
+que a bloqueou.
+
+**Trocar de camada** (efeito imediato, sem relogar): botão direito no widget, ou
+`./install.sh --layer desktop|auto|top`, ou a página *Aparência*.
+
+## Altura estável da grade
+
+A área dos dias mede o mesmo em qualquer mês, e isso é mantido por três
+decisões que se apoiam umas nas outras:
+
+1. **Sempre 6×7 células** (`lib/monthLayout.js`). Meses que cabem em 4 ou 5
+   semanas ganham linhas de preenchimento com dias dos meses vizinhos, em vez
+   de a grade encolher. Testado para todos os meses de 2024–2027, com semana
+   começando no domingo e na segunda.
+2. **Altura fixa na linha** (`.gcal-grid-row { height: 40px }`), em CSS e não
+   em pixels no JS, para acompanhar o fator de escala em telas HiDPI.
+3. **Geometria constante da célula.** Duas armadilhas sutis, ambas já
+   observadas na prática:
+   * a faixa de marcadores (`.gcal-grid-dots`) tem altura reservada e **nunca é
+     ocultada** — escondê-la nos dias sem evento encolhia a célula, logo a
+     linha, logo a grade; e como os dias com evento caem em linhas diferentes a
+     cada mês, o calendário mudava de tamanho ao navegar;
+   * todas as células têm `border: 1px solid transparent`, e o dia de hoje só
+     troca `border-color`. Aplicar a borda apenas em "hoje" deixava aquela
+     linha mais alta que as outras — e "hoje" muda de linha a cada mês.
+
+## Arrastar
+
+O arraste é armado na **fase de captura** (`captured-event` no widget), não com
+um handler comum no cabeçalho: os `St.Button` do cabeçalho consomem
+`button-press-event`, e o `_monthButton` tem `x_expand: true`, então um handler
+comum só receberia a pressão nos poucos pixels de padding entre os botões.
+
+Duas armadilhas do Clutter 14 que já custaram caro aqui:
+
+* **`event.get_source()` devolve `null`** — os eventos viraram imutáveis no
+  mutter 46 e o campo saiu (o JS do Shell 46 não usa mais essa chamada). Passar
+  esse `null` para `header.contains()` lança *"Argument descendant may not be
+  null"* a cada pressão. Para saber onde o ponteiro caiu, use geometria
+  (`get_transformed_position`/`get_transformed_size`) e, para descobrir o ator,
+  `global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y)`.
+* **Sem `global.stage.grab()`** os eventos de movimento somem assim que o
+  ponteiro sai do ator.
+
+O arraste só começa depois do limiar do sistema
+(`St.Settings.get().drag_threshold`), então clique continua sendo clique; o
+release final é engolido e o botão pressionado recebe `fake_release()`.
+
+## Ciclo de vida
+
+`enable()` monta o grafo e chama `_initAsync()`; `disable()` cancela e destrói na
+ordem inversa.
+
+* Um único `Gio.Cancellable` percorre HTTP, keyring, servidor de loopback e
+  esperas de retentativa. `disable()` o cancela: nada assíncrono sobrevive.
+* Um contador de geração descarta a inicialização assíncrona se o `disable()`
+  acontecer no meio dela.
+* Todo GLib source passa por `TimerPool`, destruído junto.
+* Todo `connect()` é registrado e desconectado no `destroy()`.
 
 ---
 
-## Credenciais OAuth (Google Cloud Console)
+## Testes
 
-O usuário já criou as credenciais. Para referência:
-1. Acesse https://console.cloud.google.com
-2. Projeto → APIs e Serviços → Google Calendar API (ativada)
-3. Credenciais → OAuth 2.0 Client ID → Tipo: **Desktop app**
-4. Client ID e Client Secret colados nas Preferências da extensão
+```bash
+./install.sh --test          # ou:  cd zorin-gcalendar@extension && ./tests/run.sh
+```
 
-**Redirect URI configurada:** `http://localhost:9004` (a extensão escuta nessa porta)
+Roda em `gjs` puro, sem GNOME Shell e sem npm:
+
+* **90 testes unitários** — fusos e eventos de dia inteiro, eventos de vários
+  dias, PKCE (com o vetor da RFC 7636), classificação de erros, e o `EventStore`
+  inteiro contra dublês (sync, falha parcial, offline, escrita, ciclo de vida).
+* **Smoke test das preferências** — monta as quatro páginas com GTK4/libadwaita
+  de verdade, sem abrir janela.
+
+O que **não** dá para cobrir sem uma sessão do Shell: os módulos de `ui/`
+(precisam de St/Clutter) e o fluxo OAuth ponta a ponta (precisa do navegador e
+de credenciais reais).
 
 ---
 
-## Arquitetura do fluxo OAuth (para entender o contexto da correção)
+## Diagnóstico
 
+```bash
+journalctl -f -o cat /usr/bin/gnome-shell | grep GCalendar
 ```
-Usuário clica "Entrar com Google"
-    ↓
-googleAuth.startAuthFlow()
-    ↓
-utils.randomString(64)          → code_verifier (aleatório)
-utils.sha256Base64Url(verifier) → code_challenge  ← AQUI ESTÁ O BUG (btoa)
-    ↓
-Abre browser: accounts.google.com/o/oauth2/v2/auth?code_challenge=...
-    ↓
-Gio.SocketService escuta localhost:9004
-    ↓
-Browser redireciona → localhost:9004/?code=XXX&state=YYY
-    ↓
-googleAuth._exchangeCode(code)
-    ↓
-POST https://oauth2.googleapis.com/token
-    ↓
-Tokens salvos: access_token → GSettings, refresh_token → GNOME Keyring
-    ↓
-eventManager.start() → primeira sincronização → widget.refresh()
-```
+
+Detalhes extras: inicie a sessão com `GCAL_DEBUG=1` no ambiente.
+
+| Sintoma | Causa provável |
+|---|---|
+| "Não foi possível gravar o token no GNOME Keyring" | chaveiro *Login* bloqueado — abra o **Senhas e Chaves** |
+| Login volta para a tela inicial | falta o e-mail em *Usuários de teste* na tela de consentimento |
+| "Client ID ou Client Secret inválidos" | credenciais de tipo errado (use *Aplicativo para computador*) |
+| Widget não aparece | veja se o Shell é 46/47 e se a extensão está habilitada |

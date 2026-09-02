@@ -1,94 +1,319 @@
 /**
- * prefs.js — Janela de preferências (GTK4 / Adwaita)
- * Roda num processo separado do Shell.
+ * prefs.js — janela de preferências (GTK4 + libadwaita).
+ *
+ * Roda num processo separado do gnome-shell, então não pode importar nada de
+ * `resource:///org/gnome/shell/...` nem tocar em St/Clutter.
+ *
+ * O Client Secret vai para o GNOME Keyring, não para o GSettings — é por isso
+ * que este campo não usa `settings.bind()` como os demais.
  */
 import Adw from 'gi://Adw';
 import Gtk from 'gi://Gtk';
 import Gio from 'gi://Gio';
-import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import GLib from 'gi://GLib';
+import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+
+import {SecretStore, SecretKey} from './lib/secretStore.js';
+
+const SECRET_SAVE_DEBOUNCE_MS = 700;
+// Mesma ordem das opções mostradas na combo de camada.
+const LAYERS = ['desktop', 'auto', 'top'];
+const CONSOLE_URL = 'https://console.cloud.google.com/apis/credentials';
 
 export default class ZorinGCalendarPrefs extends ExtensionPreferences {
 
-    fillPreferencesWindow(win) {
-        win.set_default_size(600, 680);
-        win.set_title('Zorin GCalendar — Preferências');
-        const s = this.getSettings();
+    fillPreferencesWindow(window) {
+        const settings = this.getSettings();
+        const secrets = new SecretStore();
 
-        /* ── Página 1: Conta ─────────────────────────────────── */
-        const pg1 = new Adw.PreferencesPage({ title: 'Conta', icon_name: 'avatar-default-symbolic' });
-
-        const grp1 = new Adw.PreferencesGroup({
-            title:       'Credenciais OAuth 2.0 do Google',
-            description: '1. Acesse https://console.cloud.google.com\n' +
-                         '2. Crie um projeto → Ativar "Google Calendar API"\n' +
-                         '3. Credenciais → Criar → OAuth 2.0 Client ID → Tipo: Desktop app\n' +
-                         '4. Cole o Client ID e Client Secret abaixo.',
+        // Cancela trabalho pendente quando a janela fecha, para não deixar
+        // timeouts e chamadas ao keyring rodando sozinhos.
+        this._pendingSaveId = 0;
+        window.connect('close-request', () => {
+            if (this._pendingSaveId) {
+                GLib.source_remove(this._pendingSaveId);
+                this._pendingSaveId = 0;
+            }
+            return false;
         });
 
-        const r1 = new Adw.EntryRow({ title: 'Client ID' });
-        s.bind('client-id', r1, 'text', Gio.SettingsBindFlags.DEFAULT);
+        window.set_default_size(640, 720);
+        window.add(this._accountPage(settings, secrets));
+        window.add(this._calendarsPage(settings));
+        window.add(this._appearancePage(settings));
+        window.add(this._behaviourPage(settings));
+    }
 
-        const r2 = new Adw.PasswordEntryRow({ title: 'Client Secret' });
-        s.bind('client-secret', r2, 'text', Gio.SettingsBindFlags.DEFAULT);
+    /* ══════════════════════ Conta ══════════════════════ */
 
-        const link = new Gtk.LinkButton({
-            uri:   'https://console.cloud.google.com/apis/credentials',
-            label: 'Abrir Google Cloud Console →',
+    _accountPage(settings, secrets) {
+        const page = new Adw.PreferencesPage({
+            title: 'Conta',
+            icon_name: 'avatar-default-symbolic',
         });
-        const r3 = new Adw.ActionRow({ title: 'Console' });
-        r3.add_suffix(link); r3.set_activatable_widget(link);
 
-        grp1.add(r1); grp1.add(r2); grp1.add(r3);
-        pg1.add(grp1);
-        win.add(pg1);
-
-        /* ── Página 2: Widget ────────────────────────────────── */
-        const pg2 = new Adw.PreferencesPage({ title: 'Widget', icon_name: 'applications-graphics-symbolic' });
-
-        const grp2 = new Adw.PreferencesGroup({ title: 'Posição do widget' });
-        const rx = new Adw.SpinRow({
-            title: 'Posição X (px)',
-            adjustment: new Gtk.Adjustment({ lower: 0, upper: 3840, step_increment: 10, value: 40 }),
+        const group = new Adw.PreferencesGroup({
+            title: 'Credenciais OAuth 2.0',
+            description:
+                'A extensão usa suas próprias credenciais do Google, criadas em ' +
+                'console.cloud.google.com:\n' +
+                '1. Crie um projeto e ative a "Google Calendar API".\n' +
+                '2. Em Credenciais → Criar → ID do cliente OAuth, escolha o tipo ' +
+                '"Aplicativo para computador".\n' +
+                '3. Cole abaixo o Client ID e o Client Secret gerados.',
         });
-        s.bind('widget-x', rx, 'value', Gio.SettingsBindFlags.DEFAULT);
-        const ry = new Adw.SpinRow({
-            title: 'Posição Y (px)',
-            adjustment: new Gtk.Adjustment({ lower: 0, upper: 2160, step_increment: 10, value: 60 }),
-        });
-        s.bind('widget-y', ry, 'value', Gio.SettingsBindFlags.DEFAULT);
-        const rop = new Adw.SpinRow({
-            title: 'Opacidade do fundo (%)',
-            adjustment: new Gtk.Adjustment({ lower: 30, upper: 100, step_increment: 5, value: 92 }),
-        });
-        s.bind('widget-opacity', rop, 'value', Gio.SettingsBindFlags.DEFAULT);
 
-        grp2.add(rx); grp2.add(ry); grp2.add(rop);
-        pg2.add(grp2);
+        const clientIdRow = new Adw.EntryRow({title: 'Client ID'});
+        settings.bind('client-id', clientIdRow, 'text', Gio.SettingsBindFlags.DEFAULT);
+        group.add(clientIdRow);
 
-        /* ── Página 3: Sync ──────────────────────────────────── */
-        const pg3 = new Adw.PreferencesPage({ title: 'Sincronização', icon_name: 'emblem-synchronizing-symbolic' });
+        const secretRow = new Adw.PasswordEntryRow({title: 'Client Secret'});
+        this._bindSecret(secretRow, secrets, SecretKey.CLIENT_SECRET);
+        group.add(secretRow);
 
-        const grp3 = new Adw.PreferencesGroup({ title: 'Opções' });
-        const rs = new Adw.SpinRow({
-            title:    'Intervalo de sync (min)',
-            adjustment: new Gtk.Adjustment({ lower: 1, upper: 60, step_increment: 1, value: 5 }),
+        const consoleRow = new Adw.ActionRow({
+            title: 'Google Cloud Console',
+            subtitle: 'Abrir a página de credenciais',
         });
-        s.bind('sync-interval', rs, 'value', Gio.SettingsBindFlags.DEFAULT);
-        const rd = new Adw.SpinRow({
-            title: 'Dias à frente',
-            adjustment: new Gtk.Adjustment({ lower: 1, upper: 60, step_increment: 1, value: 30 }),
+        const consoleButton = new Gtk.LinkButton({
+            uri: CONSOLE_URL,
+            label: 'Abrir',
+            valign: Gtk.Align.CENTER,
         });
-        s.bind('days-ahead', rd, 'value', Gio.SettingsBindFlags.DEFAULT);
-        const rn = new Adw.SpinRow({
-            title: 'Notificar antes do evento (min)',
-            adjustment: new Gtk.Adjustment({ lower: 1, upper: 60, step_increment: 1, value: 10 }),
+        consoleRow.add_suffix(consoleButton);
+        consoleRow.set_activatable_widget(consoleButton);
+        group.add(consoleRow);
+        page.add(group);
+
+        const sessionGroup = new Adw.PreferencesGroup({
+            title: 'Sessão',
+            description: 'O Client Secret e o refresh token ficam no GNOME Keyring, ' +
+                         'nunca em texto claro no dconf.',
         });
-        s.bind('notification-minutes-before', rn, 'value', Gio.SettingsBindFlags.DEFAULT);
 
-        grp3.add(rs); grp3.add(rd); grp3.add(rn);
-        pg3.add(grp3);
+        const statusRow = new Adw.ActionRow({
+            title: 'Conta conectada',
+            subtitle: 'Verificando…',
+        });
+        const signOutButton = new Gtk.Button({
+            label: 'Desconectar',
+            valign: Gtk.Align.CENTER,
+            sensitive: false,
+        });
+        signOutButton.add_css_class('destructive-action');
+        statusRow.add_suffix(signOutButton);
+        sessionGroup.add(statusRow);
+        page.add(sessionGroup);
 
-        win.add(pg2);
-        win.add(pg3);
+        const refreshStatus = async () => {
+            const token = await secrets.get(SecretKey.REFRESH_TOKEN);
+            statusRow.set_subtitle(token
+                ? 'Conectada — o widget está autorizado a acessar sua agenda.'
+                : 'Nenhuma conta conectada. Use "Entrar com Google" no widget.');
+            signOutButton.set_sensitive(!!token);
+        };
+
+        signOutButton.connect('clicked', () => {
+            signOutButton.set_sensitive(false);
+            // Apagar o keyring daqui deixaria a extensão com o token ainda em
+            // memória e sem revogá-lo no Google. Este pedido faz a extensão
+            // executar a desconexão completa do lado dela.
+            settings.set_int64('sign-out-requested', Math.floor(Date.now() / 1000));
+            statusRow.set_subtitle('Desconectando…');
+        });
+
+        // A extensão zera a chave quando termina de desconectar; usamos isso
+        // como aviso de conclusão, sem ficar consultando o keyring em laço.
+        settings.connect('changed::sign-out-requested', () => {
+            if (settings.get_int64('sign-out-requested') === 0)
+                refreshStatus().catch(() => {});
+        });
+
+        refreshStatus().catch(err => statusRow.set_subtitle(`Keyring indisponível: ${err.message}`));
+        return page;
+    }
+
+    /**
+     * Liga uma linha de senha ao keyring: carrega ao abrir e grava com um
+     * pequeno atraso, para não escrever a cada tecla digitada.
+     */
+    _bindSecret(row, secrets, key) {
+        let loading = true;
+
+        secrets.get(key)
+            .then(value => {
+                row.set_text(value ?? '');
+                loading = false;
+            })
+            .catch(() => {
+                loading = false;
+            });
+
+        row.connect('notify::text', () => {
+            if (loading)
+                return;
+            if (this._pendingSaveId)
+                GLib.source_remove(this._pendingSaveId);
+            this._pendingSaveId = GLib.timeout_add(
+                GLib.PRIORITY_DEFAULT, SECRET_SAVE_DEBOUNCE_MS, () => {
+                    this._pendingSaveId = 0;
+                    secrets.set(key, row.get_text()).catch(() => {});
+                    return GLib.SOURCE_REMOVE;
+                });
+        });
+    }
+
+    /* ══════════════════════ Agendas ══════════════════════ */
+
+    _calendarsPage(settings) {
+        const page = new Adw.PreferencesPage({
+            title: 'Agendas',
+            icon_name: 'x-office-calendar-symbolic',
+        });
+
+        const group = new Adw.PreferencesGroup({
+            title: 'Agendas exibidas',
+            description: 'Sem nenhuma marcada, o widget usa as agendas que estão ' +
+                         'visíveis no Google Agenda.',
+        });
+
+        const calendars = this._loadCachedCalendars();
+        if (calendars.length === 0) {
+            group.add(new Adw.ActionRow({
+                title: 'Nenhuma agenda conhecida ainda',
+                subtitle: 'Conecte sua conta e sincronize uma vez; a lista aparece aqui.',
+            }));
+        } else {
+            const enabled = new Set(settings.get_strv('enabled-calendars'));
+            const useDefaults = enabled.size === 0;
+
+            for (const calendar of calendars) {
+                const row = new Adw.SwitchRow({
+                    title: calendar.name,
+                    subtitle: calendar.primary ? 'Agenda principal' : calendar.id,
+                    active: useDefaults ? calendar.selected !== false : enabled.has(calendar.id),
+                });
+                row.connect('notify::active', () => {
+                    const current = new Set(settings.get_strv('enabled-calendars'));
+                    // Primeira alteração: parte do estado visível na tela.
+                    if (current.size === 0) {
+                        for (const c of calendars) {
+                            if (c.selected !== false)
+                                current.add(c.id);
+                        }
+                    }
+                    if (row.active)
+                        current.add(calendar.id);
+                    else
+                        current.delete(calendar.id);
+                    settings.set_strv('enabled-calendars', [...current]);
+                });
+                group.add(row);
+            }
+        }
+
+        page.add(group);
+        return page;
+    }
+
+    /** Lê a lista de agendas do cache gravado pela extensão. */
+    _loadCachedCalendars() {
+        try {
+            const path = GLib.build_filenamev([
+                GLib.get_user_cache_dir(), this.uuid, 'events.json']);
+            const [ok, contents] = Gio.File.new_for_path(path).load_contents(null);
+            if (!ok)
+                return [];
+            const data = JSON.parse(new TextDecoder().decode(contents));
+            return Array.isArray(data.calendars) ? data.calendars : [];
+        } catch {
+            return [];
+        }
+    }
+
+    /* ══════════════════════ Aparência ══════════════════════ */
+
+    _appearancePage(settings) {
+        const page = new Adw.PreferencesPage({
+            title: 'Aparência',
+            icon_name: 'preferences-desktop-appearance-symbolic',
+        });
+
+        const layerGroup = new Adw.PreferencesGroup({title: 'Posicionamento'});
+
+        const layerRow = new Adw.ComboRow({
+            title: 'Camada',
+            subtitle: 'Onde o widget fica em relação às janelas. ' +
+                      '"Some sob as janelas" é o modo que sempre recebe cliques.',
+            model: Gtk.StringList.new([
+                'Atrás das janelas',
+                'Some sob as janelas (mais compatível)',
+                'Sempre visível, acima das janelas',
+            ]),
+            selected: Math.max(0, LAYERS.indexOf(settings.get_string('widget-layer'))),
+        });
+        layerRow.connect('notify::selected', () =>
+            settings.set_string('widget-layer', LAYERS[layerRow.selected] ?? 'desktop'));
+        layerGroup.add(layerRow);
+
+        layerGroup.add(this._spinRow(settings, 'widget-x', 'Posição X (px)', 0, 7680, 10));
+        layerGroup.add(this._spinRow(settings, 'widget-y', 'Posição Y (px)', 0, 4320, 10));
+        layerGroup.add(new Adw.ActionRow({
+            title: 'Dica',
+            subtitle: 'Arraste o widget pelo cabeçalho; a posição é salva sozinha.',
+        }));
+        page.add(layerGroup);
+
+        const styleGroup = new Adw.PreferencesGroup({title: 'Estilo'});
+        styleGroup.add(this._spinRow(settings, 'widget-opacity',
+            'Opacidade do fundo (%)', 20, 100, 5));
+        page.add(styleGroup);
+
+        return page;
+    }
+
+    /* ══════════════════════ Comportamento ══════════════════════ */
+
+    _behaviourPage(settings) {
+        const page = new Adw.PreferencesPage({
+            title: 'Sincronização',
+            icon_name: 'emblem-synchronizing-symbolic',
+        });
+
+        const syncGroup = new Adw.PreferencesGroup({title: 'Atualização'});
+        syncGroup.add(this._spinRow(settings, 'sync-interval',
+            'Intervalo de sincronização (min)', 1, 60, 1));
+        syncGroup.add(this._spinRow(settings, 'days-ahead',
+            'Dias à frente sempre atualizados', 1, 365, 1));
+        page.add(syncGroup);
+
+        const notifyGroup = new Adw.PreferencesGroup({title: 'Notificações'});
+        const enabledRow = new Adw.SwitchRow({title: 'Avisar sobre eventos próximos'});
+        settings.bind('notifications-enabled', enabledRow, 'active',
+            Gio.SettingsBindFlags.DEFAULT);
+        notifyGroup.add(enabledRow);
+
+        const minutesRow = this._spinRow(settings, 'notification-minutes-before',
+            'Antecedência (min)', 1, 120, 1);
+        settings.bind('notifications-enabled', minutesRow, 'sensitive',
+            Gio.SettingsBindFlags.GET);
+        notifyGroup.add(minutesRow);
+        page.add(notifyGroup);
+
+        return page;
+    }
+
+    _spinRow(settings, key, title, lower, upper, step) {
+        const row = new Adw.SpinRow({
+            title,
+            adjustment: new Gtk.Adjustment({
+                lower, upper,
+                step_increment: step,
+                page_increment: step * 10,
+                value: settings.get_int(key),
+            }),
+        });
+        settings.bind(key, row, 'value', Gio.SettingsBindFlags.DEFAULT);
+        return row;
     }
 }

@@ -3,48 +3,115 @@
   <schema id="org.gnome.shell.extensions.zorin-gcalendar"
           path="/org/gnome/shell/extensions/zorin-gcalendar/">
 
-    <!-- OAuth credentials -->
-    <key name="client-id"     type="s"><default>''</default></key>
-    <key name="client-secret" type="s"><default>''</default></key>
-    <key name="access-token"  type="s"><default>''</default></key>
-    <key name="refresh-token" type="s"><default>''</default></key>
-    <key name="token-expiry"  type="x"><default>0</default></key>
+    <!-- ══ Credenciais ═════════════════════════════════════════════════
+         O Client ID de um cliente "Desktop app" não é secreto (RFC 8252).
+         O Client Secret e os tokens ficam no GNOME Keyring, nunca aqui.
+         As chaves abaixo marcadas como obsoletas existem só para migrar
+         instalações da versão 1, que gravava tudo em texto claro no dconf.
+    -->
+    <key name="client-id" type="s">
+      <default>''</default>
+      <summary>Client ID do OAuth 2.0</summary>
+      <description>Identificador do cliente OAuth criado no Google Cloud Console.</description>
+    </key>
 
-    <!-- Widget position (pixels from top-left of primary monitor) -->
+    <key name="client-secret" type="s">
+      <default>''</default>
+      <summary>Obsoleto — migrado para o GNOME Keyring</summary>
+      <description>Mantido apenas para migração automática da versão 1. Sempre vazio depois disso.</description>
+    </key>
+    <key name="access-token" type="s">
+      <default>''</default>
+      <summary>Obsoleto — o access token não é mais persistido</summary>
+      <description>Mantido apenas para limpar resíduos da versão 1.</description>
+    </key>
+    <key name="refresh-token" type="s">
+      <default>''</default>
+      <summary>Obsoleto — migrado para o GNOME Keyring</summary>
+      <description>Mantido apenas para migração automática da versão 1. Sempre vazio depois disso.</description>
+    </key>
+    <key name="token-expiry" type="x">
+      <default>0</default>
+      <summary>Obsoleto — a expiração vive em memória</summary>
+      <description>Mantido apenas para limpar resíduos da versão 1.</description>
+    </key>
+
+    <!-- ══ Posição e aparência ═══════════════════════════════════════ -->
     <key name="widget-x" type="i">
       <default>40</default>
-      <summary>Widget X position</summary>
+      <summary>Posição X do widget</summary>
+      <description>Distância em pixels da borda esquerda da área de trabalho.</description>
     </key>
     <key name="widget-y" type="i">
       <default>60</default>
-      <summary>Widget Y position</summary>
+      <summary>Posição Y do widget</summary>
+      <description>Distância em pixels do topo da área de trabalho.</description>
     </key>
-
-    <!-- Widget appearance -->
     <key name="widget-opacity" type="i">
+      <range min="20" max="100"/>
       <default>92</default>
-      <summary>Widget background opacity (0–100)</summary>
+      <summary>Opacidade do fundo (%)</summary>
+      <description>Afeta apenas o fundo do widget; texto e ícones ficam sempre opacos.</description>
+    </key>
+    <key name="widget-layer" type="s">
+      <choices>
+        <choice value="top"/>
+        <choice value="desktop"/>
+        <choice value="auto"/>
+      </choices>
+      <default>'desktop'</default>
+      <summary>Camada do widget</summary>
+      <description>
+        "desktop" coloca o widget dentro do grupo de janelas, acima do papel de
+        parede e dos ícones da área de trabalho, atrás das janelas comuns.
+        "auto" mantém o widget na camada de chrome (onde o clique é garantido)
+        e simplesmente o oculta enquanto alguma janela o sobrepõe — parece um
+        widget de área de trabalho e nunca perde a interação.
+        "top" mantém o widget sempre visível, acima das janelas.
+      </description>
     </key>
 
-    <!-- Behaviour -->
+    <!-- ══ Sincronização ═════════════════════════════════════════════ -->
     <key name="sync-interval" type="i">
+      <range min="1" max="60"/>
       <default>5</default>
-      <summary>Sync interval in minutes (1–60)</summary>
+      <summary>Intervalo de sincronização (minutos)</summary>
     </key>
     <key name="days-ahead" type="i">
+      <range min="1" max="365"/>
       <default>30</default>
-      <summary>Days ahead to fetch events</summary>
-    </key>
-    <key name="notification-minutes-before" type="i">
-      <default>10</default>
-      <summary>Minutes before event for notification</summary>
+      <summary>Dias à frente mantidos sempre atualizados</summary>
+      <description>Meses visitados na navegação são carregados sob demanda, além desta janela.</description>
     </key>
     <key name="enabled-calendars" type="as">
       <default>[]</default>
-      <summary>Enabled calendar IDs (empty = all)</summary>
+      <summary>Agendas exibidas</summary>
+      <description>IDs das agendas a exibir. Vazio significa usar as marcadas como visíveis no Google.</description>
     </key>
     <key name="last-sync" type="x">
       <default>0</default>
+      <summary>Horário da última sincronização (epoch em segundos)</summary>
+    </key>
+
+    <key name="sign-out-requested" type="x">
+      <default>0</default>
+      <summary>Pedido de desconexão vindo das preferências</summary>
+      <description>
+        As preferências rodam em outro processo e não alcançam o objeto de
+        autenticação da extensão. Gravar aqui o horário do pedido faz a
+        extensão revogar o token no Google e limpar o keyring.
+      </description>
+    </key>
+
+    <!-- ══ Notificações ══════════════════════════════════════════════ -->
+    <key name="notifications-enabled" type="b">
+      <default>true</default>
+      <summary>Notificar eventos próximos</summary>
+    </key>
+    <key name="notification-minutes-before" type="i">
+      <range min="1" max="120"/>
+      <default>10</default>
+      <summary>Antecedência da notificação (minutos)</summary>
     </key>
   </schema>
 </schemalist>

@@ -1,105 +1,171 @@
 /**
- * extension.js — Zorin GCalendar Desktop Widget
+ * extension.js — ponto de entrada e composition root.
  *
- * GNOME Shell 45+ (ES Modules).  Zorin OS 18 / Ubuntu 24.04 / GNOME 46.
+ * GNOME Shell 46/47 (ES Modules, classe Extension).  Aqui só se monta o grafo
+ * de dependências e se gerencia o ciclo de vida; nenhuma regra de negócio.
  *
- * Cria um widget flutuante na área de trabalho (DesktopWidget) sem
- * nenhum ícone no painel — o widget em si é o ponto de interação.
+ * Regra do enable()/disable(): tudo que é criado no enable() é destruído no
+ * disable(), e nenhuma operação assíncrona sobrevive ao disable() — daí o
+ * Gio.Cancellable compartilhado, que aborta requisições HTTP em voo, o
+ * servidor de loopback do OAuth e as esperas de retentativa.
  */
+import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
-import * as Main      from 'resource:///org/gnome/shell/ui/main.js';
-
-import { GoogleAuth          } from './googleAuth.js';
-import { CalendarAPI         } from './calendarAPI.js';
-import { EventManager        } from './eventManager.js';
-import { NotificationManager } from './notifications.js';
-import { DesktopWidget       } from './desktopWidget.js';
+import * as Log from './lib/log.js';
+import {isCancelled} from './lib/errors.js';
+import {HttpClient} from './lib/http.js';
+import {SecretStore, migrateFromSettings} from './lib/secretStore.js';
+import {GoogleAuth} from './lib/googleAuth.js';
+import {GoogleCalendarApi} from './lib/googleCalendarApi.js';
+import {CalendarService} from './lib/calendarService.js';
+import {EventStore} from './lib/eventStore.js';
+import {NotificationManager} from './lib/notificationManager.js';
+import {DesktopWidget} from './ui/desktopWidget.js';
 
 export default class ZorinGCalendarExtension extends Extension {
 
     enable() {
-        console.log('[GCalendar] Ativando…');
+        this._cancellable = new Gio.Cancellable();
+        this._settings = this.getSettings();
+
+        // Toda inicialização assíncrona pertence a esta "geração"; se o
+        // disable() acontecer no meio dela, o resultado é descartado.
+        this._generation = (this._generation ?? 0) + 1;
+        const generation = this._generation;
+
         try {
-            this._settings   = this.getSettings();
-            this._signalIds  = [];   // rastreia sinais para desconectar no disable()
+            this._http = new HttpClient({timeout: 20, cancellable: this._cancellable});
+            this._secrets = new SecretStore(this._cancellable);
 
-            this._auth    = new GoogleAuth(this);
-            this._api     = new CalendarAPI(this._auth);
-            this._manager = new EventManager(
-                this._api, this._settings,
-                () => this._onEventsChanged()
-            );
-            this._notifs  = new NotificationManager(this._manager, this._settings);
-
-            // Cria o widget na área de trabalho
-            this._widget  = new DesktopWidget(
-                this._auth, this._manager, this._settings, this
-            );
-
-            // ── Bug fix #1: Observa quando o usuário salva as credenciais
-            //    nas preferências e atualiza o widget imediatamente.
-            //    Sem isso, o botão "Entrar com Google" nunca aparecia após
-            //    configurar o Client ID sem reiniciar a extensão.
-            for (const key of ['client-id', 'client-secret']) {
-                const id = this._settings.connect(`changed::${key}`, () => {
-                    console.log(`[GCalendar] Credencial atualizada (${key}) — atualizando widget…`);
-                    this._widget?.refresh();
-                });
-                this._signalIds.push(id);
-            }
-
-            // ── Bug fix #2: Observa quando o refresh-token é gravado
-            //    (após OAuth bem-sucedido) e inicia os serviços automaticamente.
-            const rtId = this._settings.connect('changed::refresh-token', () => {
-                if (this._auth.isAuthenticated() && !this._manager._timer) {
-                    console.log('[GCalendar] Autenticado! Iniciando sync e notificações…');
-                    this._manager.start();
-                    this._notifs.start();
-                    this._widget?.refresh();
-                }
+            this._auth = new GoogleAuth({
+                settings: this._settings,
+                secrets: this._secrets,
+                http: this._http,
+                cancellable: this._cancellable,
             });
-            this._signalIds.push(rtId);
 
-            // Inicia serviços em segundo plano se já estava autenticado
-            if (this._auth.isAuthenticated()) {
-                this._manager.start();
-                this._notifs.start();
-            }
+            const api = new GoogleCalendarApi({
+                auth: this._auth,
+                http: this._http,
+                cancellable: this._cancellable,
+            });
+            const service = new CalendarService(api);
 
-            console.log('[GCalendar] Widget criado na área de trabalho.');
+            this._store = new EventStore({
+                service,
+                auth: this._auth,
+                settings: this._settings,
+                cancellable: this._cancellable,
+                cacheDir: GLib.build_filenamev([GLib.get_user_cache_dir(), this.uuid]),
+            });
+
+            this._notifications = new NotificationManager({
+                store: this._store,
+                settings: this._settings,
+            });
+
+            this._widget = new DesktopWidget({
+                store: this._store,
+                auth: this._auth,
+                settings: this._settings,
+                extension: this,
+            });
+
+            // Mudar o Client ID nas preferências deve refletir no widget na hora.
+            this._settingsSignals = [
+                this._settings.connect('changed::client-id',
+                    () => this._auth?.emit('state-changed')),
+                // As preferências rodam em outro processo: é por esta chave
+                // que elas pedem a desconexão completa da conta.
+                this._settings.connect('changed::sign-out-requested', () => {
+                    if (this._settings.get_int64('sign-out-requested') > 0)
+                        this._signOut();
+                }),
+            ];
+
+            this._initAsync(generation);
+            Log.info(`habilitada — build ${this._buildStamp()}`);
         } catch (err) {
-            console.error('[GCalendar] Falha ao ativar:', err.message, err.stack);
+            Log.error(err, 'enable');
+            this.disable();
         }
     }
 
     disable() {
-        console.log('[GCalendar] Desativando…');
+        this._cancellable?.cancel();
 
-        // Desconecta todos os sinais do GSettings
-        for (const id of (this._signalIds ?? [])) {
+        for (const id of this._settingsSignals ?? [])
             this._settings?.disconnect(id);
-        }
+        this._settingsSignals = [];
 
-        this._notifs?.stop();
-        this._manager?.stop();
+        // Ordem inversa da criação: a UI primeiro, para não renderizar em
+        // cima de um store já desmontado.
         this._widget?.destroy();
+        this._notifications?.destroy();
+        this._store?.destroy();
+        this._auth?.destroy();
+        this._http?.destroy();
 
-        this._signalIds = null;
-        this._widget    = null;
-        this._notifs    = null;
-        this._manager   = null;
-        this._api       = null;
-        this._auth      = null;
-        this._settings  = null;
+        this._widget = null;
+        this._notifications = null;
+        this._store = null;
+        this._auth = null;
+        this._http = null;
+        this._secrets = null;
+        this._settings = null;
+        this._cancellable = null;
 
-        console.log('[GCalendar] Desativado.');
+        Log.debug('extensão desabilitada');
     }
 
-    _onEventsChanged() {
-        this._widget?.refresh();
-        if (this._notifs && !this._notifs._timer) {
-            this._notifs.start();
+    /**
+     * Carimbo gravado pelo install.sh.
+     *
+     * O GNOME cacheia os módulos ESM: re-habilitar a extensão NÃO recarrega o
+     * código, só logout/login. Registrar o build no journal é o que permite
+     * saber se o Shell já está rodando a versão instalada.
+     */
+    _buildStamp() {
+        try {
+            const file = this.dir.get_child('BUILD');
+            const [ok, contents] = file.load_contents(null);
+            if (ok)
+                return new TextDecoder().decode(contents).trim();
+        } catch {
+            // Instalação sem carimbo (cópia manual, por exemplo).
+        }
+        return 'desconhecido';
+    }
+
+    async _signOut() {
+        try {
+            await this._auth?.signOut();
+            this._settings?.set_int64('sign-out-requested', 0);
+        } catch (err) {
+            if (!isCancelled(err))
+                Log.error(err, 'desconectar');
+        }
+    }
+
+    /** Carrega segredos e sobe os serviços; roda depois do enable() retornar. */
+    async _initAsync(generation) {
+        try {
+            await migrateFromSettings(this._settings, this._secrets);
+            if (this._generation !== generation)
+                return;
+
+            await this._auth.load();
+            if (this._generation !== generation)
+                return;
+
+            this._store.start();
+            this._notifications.start();
+        } catch (err) {
+            if (isCancelled(err) || this._generation !== generation)
+                return;
+            Log.error(err, 'inicialização');
         }
     }
 }
