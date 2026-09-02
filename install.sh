@@ -10,6 +10,7 @@
 #     ./install.sh --layer desktop|auto|top   troca a camada (efeito imediato)
 #     ./install.sh --status   diz se o Shell já carregou a versão instalada
 #     ./install.sh --diagnose relatório para depurar cliques que não chegam
+#     ./install.sh --forget   apaga cache, agendas e token da conta (mantém o app)
 # ============================================================
 set -euo pipefail
 
@@ -198,6 +199,82 @@ do_diagnose() {
         || echo "  (nenhum)"
 }
 
+# Remove tudo o que a extensão guardou sobre a CONTA, mantendo a extensão
+# instalada e o Client ID (que é credencial do aplicativo, não da conta).
+do_forget() {
+    local cache="$HOME/.cache/$UUID"
+    local schema="org.gnome.shell.extensions.zorin-gcalendar"
+
+    if [[ -d "$cache" ]]; then
+        rm -rf "$cache"
+        ok "Cache de eventos e agendas removido ($cache)"
+    else
+        ok "Nenhum cache de eventos em disco"
+    fi
+
+    dconf reset "/org/gnome/shell/extensions/zorin-gcalendar/enabled-calendars"
+    dconf reset "/org/gnome/shell/extensions/zorin-gcalendar/last-sync"
+    ok "IDs de agenda e horário de sincronização apagados do dconf"
+
+    # secret-tool é do pacote libsecret-tools e pode não estar instalado;
+    # gjs sempre está (a extensão depende dele), então falamos com o keyring
+    # pela mesma API que a extensão usa.
+    local script
+    script="$(mktemp --suffix=.js)"
+    cat > "$script" <<'GJS'
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import Secret from 'gi://Secret';
+
+Gio._promisify(Secret, 'password_clear', 'password_clear_finish');
+Gio._promisify(Secret, 'password_lookup', 'password_lookup_finish');
+
+const SCHEMA = new Secret.Schema('org.gnome.shell.extensions.zorin-gcalendar',
+    Secret.SchemaFlags.NONE, {key: Secret.SchemaAttributeType.STRING});
+
+// O Client Secret é credencial do aplicativo, não da conta: só sai com --all.
+const keys = GLib.getenv('GCAL_FORGET_ALL') === '1'
+    ? ['refresh-token', 'client-secret']
+    : ['refresh-token'];
+
+const loop = GLib.MainLoop.new(null, false);
+let failed = 0;
+
+(async () => {
+    for (const key of keys) {
+        try {
+            const had = await Secret.password_lookup(SCHEMA, {key}, null);
+            await Secret.password_clear(SCHEMA, {key}, null);
+            print(had ? `      ${key}: removido` : `      ${key}: já não existia`);
+        } catch (e) {
+            failed++;
+            print(`      ${key}: FALHOU — ${e.message}`);
+        }
+    }
+    loop.quit();
+})();
+
+loop.run();
+imports.system.exit(failed ? 1 : 0);
+GJS
+
+    echo "  GNOME Keyring:"
+    if gjs -m "$script"; then
+        ok "Keyring limpo"
+    else
+        warn "Alguma entrada não pôde ser removida (chaveiro bloqueado?)"
+    fi
+    rm -f "$script"
+
+    if [[ "${GCAL_FORGET_ALL:-}" != 1 ]]; then
+        warn "Mantidos: Client ID e Client Secret (credenciais do aplicativo)."
+        echo  "  Para apagar tudo:  GCAL_FORGET_ALL=1 ./install.sh --forget"
+    else
+        dconf reset "/org/gnome/shell/extensions/zorin-gcalendar/client-id"
+        ok "Client ID também removido"
+    fi
+}
+
 do_zip() {
     check_deps
     run_tests
@@ -214,8 +291,9 @@ case "${1:-install}" in
     --layer)  do_layer "${2:-}" ;;
     --status) do_status ;;
     --diagnose) do_diagnose ;;
+    --forget) do_forget ;;
     --zip)    do_zip ;;
     --test)   run_tests ;;
-    --help|-h) sed -n '2,15p' "${BASH_SOURCE[0]}" ;;
+    --help|-h) sed -n '2,16p' "${BASH_SOURCE[0]}" ;;
     *)        do_install ;;
 esac

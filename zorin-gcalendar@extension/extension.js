@@ -142,6 +142,9 @@ export default class ZorinGCalendarExtension extends Extension {
     async _signOut() {
         try {
             await this._auth?.signOut();
+            // signOut() já dispara o 'state-changed' que limpa memória e
+            // cache; isto remove também o que resta em GSettings.
+            this._store?.forgetLocalData();
             this._settings?.set_int64('sign-out-requested', 0);
         } catch (err) {
             if (!isCancelled(err))

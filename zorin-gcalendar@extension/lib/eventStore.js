@@ -391,12 +391,42 @@ export const EventStore = GObject.registerClass({
             list.sort(compareEvents);
     }
 
+    /**
+     * Sem sessão, nada de agenda deve continuar em disco: o cache guarda
+     * título, descrição e local de cada evento, além dos nomes e IDs das
+     * agendas (um deles é o próprio e-mail do usuário).
+     */
     _clearEvents() {
         this._events.clear();
         this._index.clear();
         this._calendars = [];
         this._loadedRanges = [];
+        this._lastSync = 0;
+        this.clearCache();
         this.emit('changed');
+    }
+
+    /** Remove o cache em disco. */
+    clearCache() {
+        try {
+            this._cacheFile().delete(null);
+        } catch (err) {
+            if (!err.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND))
+                Log.warn('não foi possível apagar o cache:', err.message);
+        }
+    }
+
+    /**
+     * Desconexão explícita: além do cache, apaga também o que sobra em
+     * GSettings e identifica o usuário — a lista de agendas escolhidas (IDs
+     * que incluem endereços de e-mail) e o horário da última sincronização.
+     * O Client ID é preservado: é a credencial do aplicativo, não da conta.
+     */
+    forgetLocalData() {
+        this._clearEvents();
+        this._settings.reset('enabled-calendars');
+        this._settings.reset('last-sync');
+        Log.info('dados locais da conta removidos');
     }
 
     _addLoadedRange(from, to) {
@@ -460,9 +490,14 @@ export const EventStore = GObject.registerClass({
                 calendars: this._calendars,
                 events: [...this._events.values()].map(serializeEvent),
             });
-            this._cacheFile().replace_contents(
+            const file = this._cacheFile();
+            file.replace_contents(
                 new TextEncoder().encode(payload), null, false,
                 Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+            // O arquivo herdaria a umask (0644/0664 é o comum) e guarda
+            // título, descrição e local dos eventos. Só o dono deve ler.
+            file.set_attribute_uint32(Gio.FILE_ATTRIBUTE_UNIX_MODE, 0o600,
+                Gio.FileQueryInfoFlags.NONE, null);
         } catch (err) {
             Log.debug('não foi possível gravar o cache:', err.message);
         }

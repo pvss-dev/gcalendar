@@ -109,6 +109,36 @@ limpa o keyring e devolve a UI para a tela de login.
 
 ---
 
+## Dados guardados localmente
+
+| Onde | O quê | Some ao desconectar? |
+|---|---|---|
+| GNOME Keyring | refresh token | **sim** |
+| GNOME Keyring | client secret | não — é credencial do *aplicativo*, não da conta |
+| dconf | client id | não — idem |
+| dconf | `enabled-calendars`, `last-sync` | **sim** (IDs de agenda incluem endereços de e-mail) |
+| `~/.cache/<uuid>/events.json` | agendas + eventos (título, descrição, local) | **sim** |
+
+O cache existe para o widget não ficar vazio offline, mas guarda conteúdo
+pessoal, então:
+
+* é gravado com modo **0600** (a umask padrão deixaria 0644/0664) dentro de um
+  diretório 0700;
+* é **apagado assim que a sessão se perde** — tanto na desconexão explícita
+  quanto quando o Google revoga o token. Só limpar a memória, como era antes,
+  deixava tudo em disco depois do logout.
+
+Para apagar à mão o que pertence à conta, mantendo a extensão instalada:
+
+```bash
+./install.sh --forget                      # cache + agendas + refresh token
+GCAL_FORGET_ALL=1 ./install.sh --forget    # inclui client id e client secret
+```
+
+`--forget` fala com o keyring pela mesma API da extensão (`gjs` + libsecret),
+sem depender do `secret-tool`, que vem no pacote `libsecret-tools` e costuma
+não estar instalado.
+
 ## Como configurar as credenciais
 
 1. <https://console.cloud.google.com> → crie um projeto.

@@ -402,3 +402,75 @@ describe('eventStore · navegação entre meses', () => {
         store.destroy();
     });
 });
+
+describe('eventStore · privacidade ao desconectar', () => {
+    it('perder a sessão apaga o cache em disco, não só a memória', async () => {
+        const day = futureDay(2);
+        const cacheDir = makeTempDir();
+        const auth = new FakeAuth();
+        const store = makeStore({
+            service: new FakeService({calendars: [WORK],
+                events: [timedEvent('reuniao secreta', 'work', day, 14, 15)]}),
+            auth, settings: makeSettings(SCHEMAS_DIR), cacheDir,
+        });
+        store.start();
+        await store.sync();
+
+        const cacheFile = Gio.File.new_for_path(
+            GLib.build_filenamev([cacheDir, 'events.json']));
+        assert(cacheFile.query_exists(null), 'o cache deveria existir após o sync');
+
+        auth.setAuthenticated(false);
+
+        assert(!cacheFile.query_exists(null),
+            'título, descrição e local dos eventos não podem ficar em disco sem sessão');
+        assertEqual(store.getEventsForDay(day).length, 0);
+        store.destroy();
+        removeDir(cacheDir);
+    });
+
+    it('o cache é gravado apenas com permissão de leitura para o dono', async () => {
+        const cacheDir = makeTempDir();
+        const store = makeStore({
+            service: new FakeService({calendars: [WORK],
+                events: [timedEvent('x', 'work', futureDay(2), 9, 10)]}),
+            auth: new FakeAuth(), settings: makeSettings(SCHEMAS_DIR), cacheDir,
+        });
+        await store.sync();
+
+        const info = Gio.File.new_for_path(GLib.build_filenamev([cacheDir, 'events.json']))
+            .query_info('unix::mode', Gio.FileQueryInfoFlags.NONE, null);
+        const mode = info.get_attribute_uint32('unix::mode') & 0o777;
+
+        assertEqual(mode.toString(8), '600', 'o cache guarda dados pessoais');
+        store.destroy();
+        removeDir(cacheDir);
+    });
+
+    it('forgetLocalData limpa também os IDs das agendas no GSettings', async () => {
+        const cacheDir = makeTempDir();
+        const settings = makeSettings(SCHEMAS_DIR);
+        settings.set_strv('enabled-calendars', ['pessoal@gmail.com', 'work']);
+        const store = makeStore({
+            service: new FakeService({calendars: [WORK]}),
+            auth: new FakeAuth(), settings, cacheDir,
+        });
+        await store.sync();
+
+        store.forgetLocalData();
+
+        assertDeepEqual(settings.get_strv('enabled-calendars'), [],
+            'IDs de agenda incluem endereços de e-mail');
+        assertEqual(settings.get_int64('last-sync'), 0);
+        store.destroy();
+        removeDir(cacheDir);
+    });
+
+    it('apagar um cache inexistente não gera erro', () => {
+        const store = makeStore({service: new FakeService(), auth: new FakeAuth(),
+            settings: makeSettings(SCHEMAS_DIR), cacheDir: makeTempDir()});
+        store.clearCache();
+        store.clearCache();
+        store.destroy();
+    });
+});
