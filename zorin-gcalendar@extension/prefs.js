@@ -264,9 +264,15 @@ export default class ZorinGCalendarPrefs extends ExtensionPreferences {
         }));
         page.add(layerGroup);
 
-        const styleGroup = new Adw.PreferencesGroup({title: 'Estilo'});
+        const styleGroup = new Adw.PreferencesGroup({
+            title: 'Estilo',
+            description: 'A área de eventos tem altura fixa para o widget não ' +
+                         'mudar de tamanho conforme o dia selecionado.',
+        });
         styleGroup.add(this._spinRow(settings, 'widget-opacity',
             'Opacidade do fundo (%)', 20, 100, 5));
+        styleGroup.add(this._spinRow(settings, 'event-list-height',
+            'Altura da lista de eventos (px)', 60, 500, 10));
         page.add(styleGroup);
 
         return page;

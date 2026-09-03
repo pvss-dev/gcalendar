@@ -56,12 +56,11 @@
 
 /* ── Grade do mês ────────────────────────────────────────────────── */
 
+/* A grade é um Clutter.GridLayout com column_homogeneous: as sete colunas
+   medem igual por construção, e não conforme o número do dia. Altura vem de
+   MonthGrid._applyFixedHeight(), fixada no ator. */
 .gcal-grid {
     padding: 0 4px;
-}
-
-.gcal-grid-header {
-    padding-bottom: 4px;
 }
 
 .gcal-grid-weekday {
@@ -69,25 +68,16 @@
     font-size: 0.75em;
     font-weight: bold;
     text-align: center;
-    padding: 2px 0;
-}
-
-/* A altura efetiva vem de MonthGrid._applyFixedHeight(), que fixa a altura do
-   ator: `height` aqui é só uma preferência, e o conteúdo da célula consegue
-   superá-la. As 6 linhas repartem a altura fixa igualmente (y_expand). */
-.gcal-grid-row {
-    spacing: 1px;
-    height: 40px;
 }
 
 .gcal-grid-day {
-    height: 38px;
     border-radius: 9px;
-    /* Borda transparente reservada: só "hoje" a colore. Se a borda fosse
-       adicionada apenas na célula de hoje, aquela linha ficaria mais alta que
-       as outras — e "hoje" cai numa linha diferente a cada mês. */
+    /* Bordas reservadas em TODA célula, sempre com a mesma espessura: só a
+       cor muda. "hoje" colore as quatro; "dia com eventos" colore a de baixo
+       (inline, em MonthGrid._updateEventMarker). Assim nenhum estado altera a
+       geometria. */
     border: 1px solid transparent;
-    padding: 3px 0 2px 0;
+    border-bottom-width: 3px;
     color: rgba(255, 255, 255, 0.88);
     transition-duration: 100ms;
 }
@@ -118,20 +108,8 @@
 }
 .gcal-grid-day-selected:hover { background-color: #4a90e8; }
 
-/* Os marcadores ficam sobrepostos ao número (BinLayout), alinhados à base da
-   célula. Por não estarem no fluxo vertical, não alteram a altura do conteúdo
-   — com ou sem eventos a célula mede exatamente o mesmo. */
-.gcal-grid-dots {
-    spacing: 2px;
-    padding-bottom: 1px;
-}
-
-.gcal-grid-dot {
-    width: 4px;
-    height: 4px;
-    border-radius: 2px;
-    margin: 0 1px;
-}
+/* Não há mais atores de marcador: "dia com eventos" é a cor da borda
+   inferior da própria célula (ver .gcal-grid-day). */
 
 /* ── Dia selecionado + lista de eventos ──────────────────────────── */
 
@@ -142,8 +120,10 @@
     padding: 10px 10px 6px 10px;
 }
 
+/* A altura vem de DesktopWidget._applyListHeight(), fixada no ator; aqui um
+   max-height só criaria uma segunda fonte de verdade. */
 .gcal-scroll {
-    max-height: 190px;
+    min-height: 0;
 }
 
 .gcal-events {

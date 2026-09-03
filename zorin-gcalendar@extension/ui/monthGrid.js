@@ -1,9 +1,14 @@
 /**
  * monthGrid.js — grade do mês.
  *
- * As 6×7 células são criadas uma única vez e reaproveitadas: mudar de mês ou
- * receber um sync atualiza rótulo e estilo, sem destruir e recriar 42 atores a
- * cada renderização (o que a versão anterior fazia inclusive a cada clique).
+ * Usa `Clutter.GridLayout` com `column_homogeneous`, como o próprio calendário
+ * do GNOME Shell. É a diferença entre colunas de largura garantida e colunas
+ * que seguem o conteúdo: num `St.BoxLayout` cada filho recebe primeiro a
+ * largura *natural* dele e só depois a sobra é repartida, então "31" ocupa
+ * mais que "1" e a grade muda de largura conforme os números do mês.
+ *
+ * As 42 células são criadas uma vez e reaproveitadas; mudar de mês só atualiza
+ * rótulo e estilo.
  */
 import St from 'gi://St';
 import GObject from 'gi://GObject';
@@ -13,26 +18,36 @@ import Shell from 'gi://Shell';
 import * as Log from '../lib/log.js';
 import {dayKey, sameDay, weekdayAbbreviations, safeColour} from '../lib/utils.js';
 import {
-    GRID_ROWS, GRID_COLS as COLS, monthGridDates, isInDisplayedMonth,
+    GRID_ROWS, GRID_COLS, monthGridDates, isInDisplayedMonth,
 } from '../lib/monthLayout.js';
-
-const MAX_DOTS = 3;
 
 // Alturas lógicas (px do CSS, multiplicadas pelo fator de escala em HiDPI).
 const HEADER_HEIGHT = 22;
-const ROW_HEIGHT = 40;
+const CELL_HEIGHT = 38;
+const ROW_SPACING = 2;
+const COLUMN_SPACING = 1;
 
 export const MonthGrid = GObject.registerClass({
     Signals: {
         /** param: chave "YYYY-MM-DD" do dia clicado */
         'day-activated': {param_types: [GObject.TYPE_STRING]},
     },
-}, class MonthGrid extends St.BoxLayout {
+}, class MonthGrid extends St.Widget {
     _init() {
-        super._init({vertical: true, style_class: 'gcal-grid'});
+        super._init({
+            style_class: 'gcal-grid',
+            layout_manager: new Clutter.GridLayout({
+                // A garantia de largura: todas as colunas medem igual,
+                // independente de o dia ter um ou dois dígitos.
+                column_homogeneous: true,
+                column_spacing: COLUMN_SPACING,
+                row_spacing: ROW_SPACING,
+            }),
+            x_expand: true,
+        });
 
-        // Primeiro dia da semana conforme o locale (domingo no pt-BR,
-        // segunda na maior parte da Europa) — mesma fonte usada pelo Shell.
+        // Primeiro dia da semana conforme o locale (domingo no pt-BR, segunda
+        // na maior parte da Europa) — mesma fonte usada pelo Shell.
         this._weekStart = Shell.util_get_week_start();
         this._cells = [];
         this._cellDates = [];
@@ -40,11 +55,6 @@ export const MonthGrid = GObject.registerClass({
         this._buildHeader();
         this._buildCells();
 
-        // A altura da grade é fixada no ator, não deixada para o CSS: a
-        // propriedade `height` do St é apenas uma preferência que o conteúdo
-        // da célula ainda consegue superar — foi por isso que meses com mais
-        // dias marcados continuavam mais altos. set_height() é um pedido de
-        // tamanho fixo, que o Clutter respeita.
         this._themeContext = St.ThemeContext.get_for_stage(global.stage);
         this._scaleId = this._themeContext.connect('notify::scale-factor',
             () => this._applyFixedHeight());
@@ -56,97 +66,79 @@ export const MonthGrid = GObject.registerClass({
         });
         this._applyFixedHeight();
 
-        // Se a altura da grade mudar depois de fixada, é regressão: registra
-        // para aparecer em `./install.sh --diagnose`. Com tudo certo, isto
-        // aparece uma única vez, logo após a primeira alocação.
-        this.connect('notify::height', () => {
-            const height = Math.round(this.height);
-            if (height !== this._loggedHeight) {
-                this._loggedHeight = height;
-                Log.info(`altura da grade: ${height}px`);
-            }
-        });
-    }
-
-    /** Altura idêntica em todo mês: cabeçalho + 6 linhas, sempre. */
-    _applyFixedHeight() {
-        const scale = this._themeContext.scale_factor;
-        this._header.set_height(HEADER_HEIGHT * scale);
-        this.set_height((HEADER_HEIGHT + GRID_ROWS * ROW_HEIGHT) * scale);
-        Log.debug(`grade fixada em ${(HEADER_HEIGHT + GRID_ROWS * ROW_HEIGHT) * scale}px ` +
-            `(escala ${scale})`);
+        this.connect('notify::allocation', () => this._logGeometry());
     }
 
     _buildHeader() {
-        const header = new St.BoxLayout({style_class: 'gcal-grid-header'});
-        this._header = header;
-        for (const abbr of weekdayAbbreviations(this._weekStart)) {
-            header.add_child(new St.Label({
+        const layout = this.layout_manager;
+        this._headerLabels = weekdayAbbreviations(this._weekStart).map((abbr, column) => {
+            const label = new St.Label({
                 text: abbr,
                 style_class: 'gcal-grid-weekday',
                 x_expand: true,
-            }));
-        }
-        this.add_child(header);
+            });
+            layout.attach(label, column, 0, 1, 1);
+            return label;
+        });
     }
 
     _buildCells() {
-        for (let row = 0; row < GRID_ROWS; row++) {
-            // y_expand faz as 6 linhas repartirem igualmente a altura fixa da
-            // grade, em vez de cada uma pedir a altura do seu conteúdo.
-            const rowBox = new St.BoxLayout({
-                style_class: 'gcal-grid-row',
+        const layout = this.layout_manager;
+
+        for (let index = 0; index < GRID_ROWS * GRID_COLS; index++) {
+            const column = index % GRID_COLS;
+            const row = Math.floor(index / GRID_COLS);
+
+            // A célula tem só o rótulo. Nada de ator condicional: é o que
+            // torna a grade logada estruturalmente idêntica à deslogada. O
+            // marcador de "há eventos" é cor de borda (ver _updateEventMarker).
+            const label = new St.Label({
+                style_class: 'gcal-grid-day-number',
+                x_expand: true,
                 y_expand: true,
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
             });
-            for (let col = 0; col < COLS; col++) {
-                const index = row * COLS + col;
 
-                const label = new St.Label({
-                    style_class: 'gcal-grid-day-number',
-                    x_expand: true,
-                    y_align: Clutter.ActorAlign.CENTER,
-                });
-                const dots = new St.BoxLayout({
-                    style_class: 'gcal-grid-dots',
-                    x_align: Clutter.ActorAlign.CENTER,
-                    y_align: Clutter.ActorAlign.END,
-                });
+            // St.Button com `label` E `set_child()` perde o número do dia:
+            // definir o child substitui o rótulo interno. Só usamos child.
+            const cell = new St.Button({
+                style_class: 'gcal-grid-day',
+                can_focus: true,
+                x_expand: true,
+                y_expand: true,
+                child: label,
+            });
+            cell.connect('clicked', () => {
+                const date = this._cellDates[index];
+                if (date)
+                    this.emit('day-activated', dayKey(date));
+            });
 
-                // BinLayout empilha em vez de somar: os marcadores ficam
-                // sobrepostos ao número, na base da célula, e por isso nunca
-                // aumentam a altura do conteúdo. É o mesmo princípio do
-                // calendário do próprio Shell, que usa background-image para
-                // marcar "dia com eventos" — marcador que não entra no layout.
-                const content = new St.Widget({
-                    layout_manager: new Clutter.BinLayout(),
-                    x_expand: true,
-                    y_expand: true,
-                });
-                content.add_child(label);
-                content.add_child(dots);
-
-                // St.Button com `label` E `set_child()` perde o número do dia:
-                // definir o child substitui o rótulo interno. Só usamos child.
-                const cell = new St.Button({
-                    style_class: 'gcal-grid-day',
-                    can_focus: true,
-                    x_expand: true,
-                    y_expand: true,
-                    child: content,
-                });
-                cell.connect('clicked', () => {
-                    const date = this._cellDates[index];
-                    if (date)
-                        this.emit('day-activated', dayKey(date));
-                });
-
-                cell._label = label;
-                cell._dots = dots;
-                this._cells.push(cell);
-                rowBox.add_child(cell);
-            }
-            this.add_child(rowBox);
+            cell._label = label;
+            this._cells.push(cell);
+            layout.attach(cell, column, row + 1, 1, 1);
         }
+    }
+
+    /**
+     * Altura idêntica em todo mês, fixada no ator.
+     *
+     * `height` no CSS do St é apenas uma preferência — o conteúdo consegue
+     * superá-la. `set_height()` é um pedido de tamanho fixo, respeitado pelo
+     * Clutter. Como o valor vai em pixels, acompanha o fator de escala.
+     */
+    _applyFixedHeight() {
+        const scale = this._themeContext.scale_factor;
+
+        for (const label of this._headerLabels)
+            label.set_height(HEADER_HEIGHT * scale);
+        for (const cell of this._cells)
+            cell.set_height(CELL_HEIGHT * scale);
+
+        const rows = HEADER_HEIGHT + GRID_ROWS * CELL_HEIGHT;
+        const spacing = GRID_ROWS * ROW_SPACING;
+        this.set_height((rows + spacing) * scale);
     }
 
     /**
@@ -161,13 +153,12 @@ export const MonthGrid = GObject.registerClass({
         for (let index = 0; index < this._cells.length; index++) {
             const cell = this._cells[index];
             const date = dates[index];
-            const inMonth = isInDisplayedMonth(date, viewDate);
 
             this._cellDates[index] = date;
             cell._label.set_text(String(date.getDate()));
 
             const classes = ['gcal-grid-day'];
-            if (!inMonth)
+            if (!isInDisplayedMonth(date, viewDate))
                 classes.push('gcal-grid-day-outside');
             if (sameDay(date, today))
                 classes.push('gcal-grid-day-today');
@@ -175,26 +166,55 @@ export const MonthGrid = GObject.registerClass({
                 classes.push('gcal-grid-day-selected');
             cell.set_style_class_name(classes.join(' '));
 
-            this._updateDots(cell, coloursByDay.get(dayKey(date)) ?? []);
+            this._updateEventMarker(cell, coloursByDay.get(dayKey(date)) ?? []);
         }
     }
 
     /**
-     * Os marcadores nunca são ocultados: a faixa tem altura fixa no CSS e só
-     * fica vazia quando o dia não tem evento.
+     * Marca "dia com eventos" pela COR da borda inferior, não por um ator.
      *
-     * Ocultá-la (como antes) mudava a altura da célula, portanto da linha,
-     * portanto da grade — e como os dias com evento caem em linhas diferentes
-     * a cada mês, o calendário mudava de tamanho ao navegar.
+     * Toda célula já tem `border: 1px solid transparent` com a base mais
+     * grossa, em qualquer estado. Colorir não muda geometria nenhuma — ao
+     * contrário de acrescentar um filho, que altera o tamanho pedido pelo
+     * conteúdo. É o mesmo princípio do calendário do Shell, que usa
+     * `background-image` para esse marcador.
      */
-    _updateDots(cell, colours) {
-        cell._dots.destroy_all_children();
-        for (const colour of colours.slice(0, MAX_DOTS)) {
-            cell._dots.add_child(new St.Widget({
-                style_class: 'gcal-grid-dot',
-                style: `background-color: ${safeColour(colour)};`,
-            }));
+    _updateEventMarker(cell, colours) {
+        cell.set_style(colours.length
+            ? `border-bottom-color: ${safeColour(colours[0])};`
+            : null);
+    }
+
+    /**
+     * Registra a geometria real da grade, medida na tela.
+     *
+     * Ler a altura ou a largura que o próprio código impôs seria circular; as
+     * posições transformadas são o resultado da alocação. Sai uma linha só —
+     * outra linha significa que algo variou, e com quais números.
+     */
+    _logGeometry() {
+        const first = this._cells[0].get_transformed_position();
+        const columns = [];
+        for (let column = 0; column < GRID_COLS; column++) {
+            const [x] = this._cells[column].get_transformed_position();
+            columns.push(x);
         }
+        const lastCell = this._cells[this._cells.length - 1];
+        const [, lastY] = lastCell.get_transformed_position();
+
+        if (![...columns, first[1], lastY].every(Number.isFinite) || lastY === 0)
+            return;   // ainda sem alocação
+
+        const widths = columns.slice(1).map((x, i) => Math.round(x - columns[i]));
+        const height = Math.round(lastY + lastCell.height -
+            this._headerLabels[0].get_transformed_position()[1]);
+
+        const summary = `${height}px alt., colunas ${Math.min(...widths)}–${Math.max(...widths)}px`;
+        if (summary === this._loggedGeometry)
+            return;
+
+        this._loggedGeometry = summary;
+        Log.info(`área dos dias: ${summary} [${widths.join(', ')}]`);
     }
 
     /** Navegação por teclado entre as células (setas, Home/End). */
@@ -207,8 +227,8 @@ export const MonthGrid = GObject.registerClass({
         const deltas = {
             [Clutter.KEY_Left]: -1,
             [Clutter.KEY_Right]: 1,
-            [Clutter.KEY_Up]: -COLS,
-            [Clutter.KEY_Down]: COLS,
+            [Clutter.KEY_Up]: -GRID_COLS,
+            [Clutter.KEY_Down]: GRID_COLS,
         };
         const target = index + (deltas[direction] ?? 0);
         if (target < 0 || target >= this._cells.length)

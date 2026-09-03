@@ -83,7 +83,19 @@ class DesktopWidget extends St.Widget {
         });
         this.add_child(this._background);
 
-        const content = new St.BoxLayout({vertical: true, style_class: 'gcal-widget-content'});
+        // x_expand é obrigatório: a raiz usa Clutter.BinLayout e, sem ele, o
+        // filho recebe a largura NATURAL em vez dos 340px do widget. A largura
+        // natural de uma coluna vertical é a do filho mais largo — o cabeçalho
+        // — então a grade acabava dimensionada pelo comprimento do nome do mês
+        // ("August" × "September"), mudando de largura a cada navegação.
+        const content = new St.BoxLayout({
+            vertical: true,
+            style_class: 'gcal-widget-content',
+            x_expand: true,
+            y_expand: true,
+            x_align: Clutter.ActorAlign.FILL,
+            y_align: Clutter.ActorAlign.FILL,
+        });
         this.add_child(content);
 
         content.add_child(this._buildHeader());
@@ -104,6 +116,7 @@ class DesktopWidget extends St.Widget {
             child: this._list,
         });
         content.add_child(this._scroll);
+        this._applyListHeight();
 
         content.add_child(this._buildFooter());
         this._buildMenu();
@@ -250,6 +263,11 @@ class DesktopWidget extends St.Widget {
                 this._applyLayer();
             });
         }
+
+        this._connect(this._settings, 'changed::event-list-height',
+            () => this._applyListHeight());
+        this._connect(St.ThemeContext.get_for_stage(global.stage),
+            'notify::scale-factor', () => this._applyListHeight());
 
         this._connect(Main.layoutManager, 'monitors-changed', () => this._restorePosition());
 
@@ -643,6 +661,23 @@ class DesktopWidget extends St.Widget {
         });
 
         return covering ? covering.meta_window.get_title() ?? '(sem título)' : null;
+    }
+
+    /**
+     * Altura fixa da lista de eventos.
+     *
+     * Sem isto o widget mudava de tamanho conforme o dia selecionado tivesse
+     * mais ou menos eventos — medido no journal: 434px num dia vazio, 477px
+     * num dia com um evento. Como a área de eventos só tem conteúdo quando há
+     * uma conta conectada, o efeito aparecia apenas com o usuário logado.
+     *
+     * Fixado no ator, e não via `max-height` no CSS, pelo mesmo motivo da
+     * grade: no St o CSS é preferência, não trava.
+     */
+    _applyListHeight() {
+        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+        const height = this._settings.get_int('event-list-height');
+        this._scroll.set_height(height * scale);
     }
 
     _applyOpacity() {

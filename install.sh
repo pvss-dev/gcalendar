@@ -79,13 +79,39 @@ do_install() {
     run_tests
     compile_schemas
 
+    # `rm -rf` faz o Shell marcar a extensão como desinstalada e ela cai em
+    # disabled-extensions; sem restaurar isso depois, a reinstalação deixa a
+    # extensão silenciosamente desligada.
+    local was_enabled=no
+    if gnome-extensions list --enabled 2>/dev/null | grep -qx "$UUID"; then
+        was_enabled=yes
+    fi
+
     # Remove a instalação anterior por inteiro: sobras de versões antigas
     # (arquivos que não existem mais) só confundem na hora de depurar.
     rm -rf "$EXT_DIR"
     mkdir -p "$EXT_DIR"
     cp -r "$SRC_DIR/." "$EXT_DIR/"
-    date -u +%Y%m%d-%H%M%S > "$EXT_DIR/BUILD"
-    ok "Instalado em $EXT_DIR (build $(cat "$EXT_DIR/BUILD"))"
+
+    local stamp
+    stamp="$(date -u +%Y%m%d-%H%M%S)"
+    echo "$stamp" > "$EXT_DIR/BUILD"
+
+    # O carimbo entra no CÓDIGO, não só num arquivo à parte: assim o que o
+    # journal registra é a build realmente carregada pelo Shell. Lido do disco,
+    # ele reportaria a versão instalada mesmo com o módulo antigo em memória.
+    cat > "$EXT_DIR/lib/build.js" <<BUILDJS
+// Gerado por install.sh — não editar.
+export const BUILD = '$stamp';
+BUILDJS
+
+    ok "Instalado em $EXT_DIR (build $stamp)"
+
+    if [[ "$was_enabled" == yes ]]; then
+        gnome-extensions enable "$UUID" 2>/dev/null \
+            && ok "Extensão reabilitada" \
+            || warn "Reabilite depois de recarregar: gnome-extensions enable $UUID"
+    fi
 
     cat <<INSTRUCTIONS
 
@@ -153,11 +179,22 @@ do_status() {
 
     echo "  build instalado : $installed"
     echo "  build em execução: ${running:-<nenhum registro no journal>}"
+
+    # Extensão desligada não chama enable(), logo não registra carimbo algum —
+    # e o `running` acima seria o de uma sessão anterior. Sem este aviso, a
+    # comparação de builds engana.
+    if ! gnome-extensions list --enabled 2>/dev/null | grep -qx "$UUID"; then
+        warn "A extensão está DESABILITADA — o carimbo acima é de antes."
+        echo  "  Ligue com:  gnome-extensions enable $UUID"
+        return
+    fi
+
     if [[ -z "$running" ]]; then
         warn "O Shell ainda não carregou esta versão. Recarregue:"
         restart_hint
     elif [[ "$running" == "$installed" ]]; then
         ok "O Shell está rodando a versão instalada."
+        echo "  (o carimbo vem do módulo carregado, não do arquivo em disco)"
     else
         warn "O Shell roda um build antigo. Recarregue:"
         restart_hint
@@ -190,7 +227,7 @@ do_diagnose() {
     echo
     echo "── alturas medidas (journal) ──"
     journalctl --user -b 0 -o cat 2>/dev/null \
-        | grep -E 'altura (da grade|do widget)' | tail -12 \
+        | grep -E "área dos dias|altura do widget" | tail -12 \
         || echo "  (nenhuma)"
     echo
     echo "── decisões de região de entrada (journal) ──"
@@ -198,9 +235,12 @@ do_diagnose() {
         | grep -E 'região de entrada|habilitada — build' | tail -15 \
         || echo "  (nenhuma)"
     echo
-    echo "── erros da extensão ──"
+    echo "── erros da extensão (desde o último enable) ──"
+    # Sem recortar a partir do último enable, apareceriam rastros de builds
+    # anteriores da mesma sessão, que já foram corrigidos.
     journalctl --user -b 0 -o cat 2>/dev/null \
-        | grep -E 'desktopWidget\.js|JS ERROR.*zorin-gcalendar' | tail -10 \
+        | awk '/habilitada — build/ {buf=""} {buf = buf $0 "\n"} END {printf "%s", buf}' \
+        | grep -E 'desktopWidget\.js|monthGrid\.js|JS ERROR' | tail -10 \
         || echo "  (nenhum)"
 }
 

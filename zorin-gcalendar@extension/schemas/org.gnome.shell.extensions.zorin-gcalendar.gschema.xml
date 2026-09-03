@@ -53,6 +53,17 @@
       <summary>Opacidade do fundo (%)</summary>
       <description>Afeta apenas o fundo do widget; texto e ícones ficam sempre opacos.</description>
     </key>
+    <key name="event-list-height" type="i">
+      <range min="60" max="500"/>
+      <default>150</default>
+      <summary>Altura da lista de eventos (px)</summary>
+      <description>
+        Altura fixa da área de eventos. Fixa de propósito: se ela acompanhasse
+        a quantidade de eventos do dia, o widget mudaria de tamanho a cada
+        clique. Eventos além do espaço disponível rolam.
+      </description>
+    </key>
+
     <key name="widget-layer" type="s">
       <choices>
         <choice value="top"/>

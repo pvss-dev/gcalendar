@@ -14,6 +14,7 @@ import Gio from 'gi://Gio';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import * as Log from './lib/log.js';
+import {BUILD} from './lib/build.js';
 import {isCancelled} from './lib/errors.js';
 import {HttpClient} from './lib/http.js';
 import {SecretStore, migrateFromSettings} from './lib/secretStore.js';
@@ -86,7 +87,7 @@ export default class ZorinGCalendarExtension extends Extension {
             ];
 
             this._initAsync(generation);
-            Log.info(`habilitada — build ${this._buildStamp()}`);
+            Log.info(`habilitada — build ${BUILD}`);
         } catch (err) {
             Log.error(err, 'enable');
             this.disable();
@@ -118,25 +119,6 @@ export default class ZorinGCalendarExtension extends Extension {
         this._cancellable = null;
 
         Log.debug('extensão desabilitada');
-    }
-
-    /**
-     * Carimbo gravado pelo install.sh.
-     *
-     * O GNOME cacheia os módulos ESM: re-habilitar a extensão NÃO recarrega o
-     * código, só logout/login. Registrar o build no journal é o que permite
-     * saber se o Shell já está rodando a versão instalada.
-     */
-    _buildStamp() {
-        try {
-            const file = this.dir.get_child('BUILD');
-            const [ok, contents] = file.load_contents(null);
-            if (ok)
-                return new TextDecoder().decode(contents).trim();
-        } catch {
-            // Instalação sem carimbo (cópia manual, por exemplo).
-        }
-        return 'desconhecido';
     }
 
     async _signOut() {

@@ -199,6 +199,23 @@ que a bloqueou.
 **Trocar de camada** (efeito imediato, sem relogar): botão direito no widget, ou
 `./install.sh --layer desktop|auto|top`, ou a página *Aparência*.
 
+## Altura estável do widget
+
+Duas áreas precisam de altura fixa, e nenhuma das duas se resolve pelo CSS.
+
+**Regra geral:** no St, `height`/`max-height` no CSS são *preferências* — o
+conteúdo do filho ainda consegue superá-las. Quando a altura precisa ser
+garantida, use `set_height()` no ator (respeitado pelo Clutter) e multiplique
+pelo `scale_factor` do `St.ThemeContext`, recalculando em
+`notify::scale-factor`.
+
+**Lista de eventos** (`DesktopWidget._applyListHeight()`, chave
+`event-list-height`, padrão 150px). Sem isso o widget inteiro mudava de
+tamanho conforme o dia selecionado tivesse mais ou menos eventos — medido no
+journal: 434px num dia vazio, 477px com um evento. Como só há eventos quando
+existe conta conectada, o efeito aparecia **apenas com o usuário logado**, o
+que por um bom tempo fez parecer problema da grade.
+
 ## Altura estável da grade
 
 A área dos dias mede o mesmo em qualquer mês, e isso é mantido por três
