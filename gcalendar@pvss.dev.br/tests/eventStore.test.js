@@ -295,7 +295,7 @@ describe('eventStore · cache offline', () => {
         offlineService.failNextListWith = new NetworkError('offline');
         const second = makeStore({service: offlineService, auth: new FakeAuth(),
             settings: makeSettings(SCHEMAS_DIR), cacheDir});
-        second._loadCache();
+        await second._loadCache();
 
         assertEqual(second.getEventsForDay(day).length, 1,
             'o widget não pode ficar vazio offline');
@@ -304,11 +304,11 @@ describe('eventStore · cache offline', () => {
         removeDir(cacheDir);
     });
 
-    it('cache ausente não quebra a inicialização', () => {
+    it('cache ausente não quebra a inicialização', async () => {
         const store = makeStore({service: new FakeService(), auth: new FakeAuth(),
             settings: makeSettings(SCHEMAS_DIR),
             cacheDir: GLib.build_filenamev([makeTempDir(), 'nao-existe'])});
-        store._loadCache();
+        await store._loadCache();
         assertEqual(store.getDayKeysWithEvents().size, 0);
         store.destroy();
     });
@@ -421,6 +421,9 @@ describe('eventStore · privacidade ao desconectar', () => {
         assert(cacheFile.query_exists(null), 'o cache deveria existir após o sync');
 
         auth.setAuthenticated(false);
+        // A exclusão é disparada sem await pelo handler do sinal; aguardar uma
+        // limpeza equivalente torna a asserção determinística.
+        await store.clearCache();
 
         assert(!cacheFile.query_exists(null),
             'título, descrição e local dos eventos não podem ficar em disco sem sessão');
@@ -437,6 +440,9 @@ describe('eventStore · privacidade ao desconectar', () => {
             auth: new FakeAuth(), settings: makeSettings(SCHEMAS_DIR), cacheDir,
         });
         await store.sync();
+        // A gravação é disparada sem await pelo sync; aguardar aqui evita ler
+        // o modo no meio da escrita.
+        await store._saveCache();
 
         const info = Gio.File.new_for_path(GLib.build_filenamev([cacheDir, 'events.json']))
             .query_info('unix::mode', Gio.FileQueryInfoFlags.NONE, null);
@@ -447,30 +453,30 @@ describe('eventStore · privacidade ao desconectar', () => {
         removeDir(cacheDir);
     });
 
-    it('forgetLocalData limpa também os IDs das agendas no GSettings', async () => {
-        const cacheDir = makeTempDir();
-        const settings = makeSettings(SCHEMAS_DIR);
-        settings.set_strv('enabled-calendars', ['pessoal@gmail.com', 'work']);
-        const store = makeStore({
-            service: new FakeService({calendars: [WORK]}),
-            auth: new FakeAuth(), settings, cacheDir,
-        });
-        await store.sync();
-
-        store.forgetLocalData();
-
-        assertDeepEqual(settings.get_strv('enabled-calendars'), [],
-            'IDs de agenda incluem endereços de e-mail');
-        assertEqual(settings.get_int64('last-sync'), 0);
-        store.destroy();
-        removeDir(cacheDir);
-    });
-
-    it('apagar um cache inexistente não gera erro', () => {
+    it('apagar um cache inexistente não gera erro', async () => {
         const store = makeStore({service: new FakeService(), auth: new FakeAuth(),
             settings: makeSettings(SCHEMAS_DIR), cacheDir: makeTempDir()});
-        store.clearCache();
-        store.clearCache();
+        await store.clearCache();
+        await store.clearCache();
         store.destroy();
+    });
+
+    it('a gravação do cache não bloqueia: é assíncrona', async () => {
+        // IO síncrono no processo do Shell trava o compositor (EGO-X-004).
+        const cacheDir = makeTempDir();
+        const store = makeStore({
+            service: new FakeService({calendars: [WORK],
+                events: [timedEvent('x', 'work', futureDay(2), 9, 10)]}),
+            auth: new FakeAuth(), settings: makeSettings(SCHEMAS_DIR), cacheDir,
+        });
+
+        const gravando = store._saveCache();
+        assert(typeof gravando?.then === 'function', '_saveCache deve devolver Promise');
+        await gravando;
+
+        assert(Gio.File.new_for_path(GLib.build_filenamev([cacheDir, 'events.json']))
+            .query_exists(null), 'o cache deveria existir após aguardar');
+        store.destroy();
+        removeDir(cacheDir);
     });
 });

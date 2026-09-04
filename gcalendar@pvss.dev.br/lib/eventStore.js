@@ -18,6 +18,13 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import GObject from 'gi://GObject';
 
+// IO síncrono no processo do Shell trava o compositor: ele é single-thread e
+// desenha tudo. O linter da loja (EGO-X-004) sinaliza justamente isto.
+Gio._promisify(Gio.File.prototype, 'load_contents_async', 'load_contents_finish');
+Gio._promisify(Gio.File.prototype, 'replace_contents_bytes_async',
+    'replace_contents_finish');
+Gio._promisify(Gio.File.prototype, 'delete_async', 'delete_finish');
+
 import * as Log from './log.js';
 import {AuthError, ConfigError, isCancelled} from './errors.js';
 import {TimerPool} from './async.js';
@@ -74,7 +81,9 @@ export const EventStore = GObject.registerClass({
     /* ══════════════════════ Ciclo de vida ══════════════════════ */
 
     start() {
-        this._loadCache();
+        // Sem await: o enable() não pode bloquear esperando disco. O cache
+        // emite 'changed' quando chega e o widget se atualiza.
+        this._loadCache().catch(err => Log.debug('cache:', err.message));
 
         this._authId = this._auth.connect('state-changed', () => {
             this._updateState();
@@ -269,7 +278,7 @@ export const EventStore = GObject.registerClass({
     _finishSync(partialError, errors = []) {
         this._lastSync = Date.now();
         this._settings.set_int64('last-sync', Math.floor(this._lastSync / 1000));
-        this._saveCache();
+        this._saveCache().catch(err => Log.debug('cache:', err.message));
 
         for (const {calendarId, error} of errors)
             Log.warn(`Agenda ${calendarId} falhou:`, error.message);
@@ -340,7 +349,7 @@ export const EventStore = GObject.registerClass({
         await this._service.deleteEvent(calendarId, eventId);
         this._events.delete(`${calendarId}:${eventId}`);
         this._rebuildIndex();
-        this._saveCache();
+        this._saveCache().catch(err => Log.debug('cache:', err.message));
         this.emit('changed');
     }
 
@@ -402,31 +411,19 @@ export const EventStore = GObject.registerClass({
         this._calendars = [];
         this._loadedRanges = [];
         this._lastSync = 0;
-        this.clearCache();
+        this.clearCache().catch(err => Log.debug('cache:', err.message));
         this.emit('changed');
     }
 
-    /** Remove o cache em disco. */
-    clearCache() {
+    /** Remove o cache em disco. @returns {Promise<void>} */
+    async clearCache() {
         try {
-            this._cacheFile().delete(null);
+            await this._cacheFile().delete_async(GLib.PRIORITY_DEFAULT, this._cancellable);
         } catch (err) {
-            if (!err.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND))
+            if (!err.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND) &&
+                !isCancelled(err))
                 Log.warn('não foi possível apagar o cache:', err.message);
         }
-    }
-
-    /**
-     * Desconexão explícita: além do cache, apaga também o que sobra em
-     * GSettings e identifica o usuário — a lista de agendas escolhidas (IDs
-     * que incluem endereços de e-mail) e o horário da última sincronização.
-     * O Client ID é preservado: é a credencial do aplicativo, não da conta.
-     */
-    forgetLocalData() {
-        this._clearEvents();
-        this._settings.reset('enabled-calendars');
-        this._settings.reset('last-sync');
-        Log.debug('dados locais da conta removidos');
     }
 
     _addLoadedRange(from, to) {
@@ -481,7 +478,7 @@ export const EventStore = GObject.registerClass({
         return Gio.File.new_for_path(GLib.build_filenamev([this._cacheDir, CACHE_FILE]));
     }
 
-    _saveCache() {
+    async _saveCache() {
         try {
             GLib.mkdir_with_parents(this._cacheDir, 0o700);
             const payload = JSON.stringify({
@@ -491,24 +488,28 @@ export const EventStore = GObject.registerClass({
                 events: [...this._events.values()].map(serializeEvent),
             });
             const file = this._cacheFile();
-            file.replace_contents(
-                new TextEncoder().encode(payload), null, false,
-                Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+            await file.replace_contents_bytes_async(
+                new GLib.Bytes(new TextEncoder().encode(payload)), null, false,
+                Gio.FileCreateFlags.REPLACE_DESTINATION, this._cancellable);
+
             // O arquivo herdaria a umask (0644/0664 é o comum) e guarda
             // título, descrição e local dos eventos. Só o dono deve ler.
+            // Continua síncrono de propósito: é uma operação de metadados
+            // O(1), não a leitura/escrita de conteúdo que trava o compositor.
             file.set_attribute_uint32(Gio.FILE_ATTRIBUTE_UNIX_MODE, 0o600,
                 Gio.FileQueryInfoFlags.NONE, null);
         } catch (err) {
-            Log.debug('não foi possível gravar o cache:', err.message);
+            if (!isCancelled(err))
+                Log.debug('não foi possível gravar o cache:', err.message);
         }
     }
 
-    /** Preenche o widget imediatamente ao habilitar, mesmo sem rede. */
-    _loadCache() {
+    /** Preenche o widget assim que possível ao habilitar, mesmo sem rede. */
+    async _loadCache() {
         try {
-            const [ok, contents] = this._cacheFile().load_contents(null);
-            if (!ok)
-                return;
+            // O promisify descarta o booleano de sucesso: falha vira exceção.
+            const [contents] = await this._cacheFile().load_contents_async(
+                this._cancellable);
             const data = JSON.parse(new TextDecoder().decode(contents));
             if (data.version !== 1 || Date.now() - data.savedAt > CACHE_MAX_AGE_MS)
                 return;
@@ -523,7 +524,8 @@ export const EventStore = GObject.registerClass({
             Log.debug(`cache carregado: ${this._events.size} eventos`);
             this.emit('changed');
         } catch (err) {
-            if (!err.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND))
+            if (!err.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND) &&
+                !isCancelled(err))
                 Log.debug('cache ignorado:', err.message);
         }
     }

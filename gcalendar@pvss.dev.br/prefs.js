@@ -166,7 +166,13 @@ export default class ZorinGCalendarPrefs extends ExtensionPreferences {
         return page;
     }
 
-    /** Lê a lista de agendas do cache gravado pela extensão. */
+    /**
+     * Lê a lista de agendas do cache gravado pela extensão.
+     *
+     * IO síncrono aqui é aceitável: as preferências rodam em processo próprio,
+     * não no gnome-shell. A regra EGO-X-004 vale para o código do Shell, que é
+     * single-thread e desenha a tela — travá-lo congela o desktop inteiro.
+     */
     _loadCachedCalendars() {
         try {
             const path = GLib.build_filenamev([
