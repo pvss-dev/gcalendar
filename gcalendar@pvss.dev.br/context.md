@@ -3,8 +3,8 @@
 Widget de calendário na área de trabalho do GNOME Shell, integrado ao Google
 Agenda. Alvo verificado: **Zorin OS 18.1 / GNOME Shell 46 / GJS 1.80**.
 
-**UUID:** `gcalendar@extension`
-**Instalado em:** `~/.local/share/gnome-shell/extensions/gcalendar@extension/`
+**UUID:** `gcalendar@pvss.dev.br`
+**Instalado em:** `~/.local/share/gnome-shell/extensions/gcalendar@pvss.dev.br/`
 **Versões do Shell suportadas:** 46 e 47 (ES Modules + classe `Extension`)
 
 ---
@@ -147,7 +147,7 @@ não estar instalado.
    *Usuários de teste* (sem isso o Google recusa contas não verificadas).
 4. **Credenciais → Criar credenciais → ID do cliente OAuth** → tipo
    **Aplicativo para computador**.
-5. Copie Client ID e Client Secret para `gnome-extensions prefs gcalendar@extension`.
+5. Copie Client ID e Client Secret para `gnome-extensions prefs gcalendar@pvss.dev.br`.
 
 Não há credenciais no repositório, e não deve haver: cada instalação usa as suas.
 
@@ -286,7 +286,7 @@ ordem inversa.
 ## Testes
 
 ```bash
-./install.sh --test          # ou:  cd gcalendar@extension && ./tests/run.sh
+./install.sh --test          # ou:  cd gcalendar@pvss.dev.br && ./tests/run.sh
 ```
 
 Roda em `gjs` puro, sem GNOME Shell e sem npm:

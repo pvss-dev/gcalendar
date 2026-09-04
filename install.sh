@@ -15,7 +15,7 @@
 # ============================================================
 set -euo pipefail
 
-UUID="gcalendar@extension"
+UUID="gcalendar@pvss.dev.br"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$UUID"
 EXT_DIR="$HOME/.local/share/gnome-shell/extensions/$UUID"
 
@@ -79,6 +79,9 @@ compile_schemas() {
     ok "Schemas GSettings compilados"
 }
 
+# UUIDs que esta extensão já usou. Instalações antigas precisam sair do
+# caminho: duas cópias disputando o mesmo widget dão comportamento confuso.
+LEGACY_UUIDS=("zorin-gcalendar@extension" "gcalendar@extension")
 LEGACY_UUID="zorin-gcalendar@extension"
 LEGACY_PATH="/org/gnome/shell/extensions/zorin-gcalendar/"
 NEW_PATH="/org/gnome/shell/extensions/gcalendar/"
@@ -133,18 +136,26 @@ GJS
     gjs -m "$script" || warn "Alguma entrada não pôde ser migrada"
     rm -f "$script"
 
-    # Remove a instalação antiga para não ficarem duas extensões concorrendo.
-    gnome-extensions disable "$LEGACY_UUID" 2>/dev/null || true
-    rm -rf "$HOME/.local/share/gnome-shell/extensions/$LEGACY_UUID"
-    rm -rf "$HOME/.cache/$LEGACY_UUID"
     dconf reset -f "$LEGACY_PATH"
-    ok "Instalação antiga ($LEGACY_UUID) removida"
+}
+
+# Some com instalações de UUIDs anteriores. Roda sempre: o schema (e portanto
+# dconf e keyring) não depende do UUID, então aqui só há diretórios a limpar.
+remove_legacy_installs() {
+    local uuid
+    for uuid in "${LEGACY_UUIDS[@]}"; do
+        [[ -d "$HOME/.local/share/gnome-shell/extensions/$uuid" ]] || continue
+        gnome-extensions disable "$uuid" 2>/dev/null || true
+        rm -rf "$HOME/.local/share/gnome-shell/extensions/$uuid" "$HOME/.cache/$uuid"
+        ok "Instalação antiga removida: $uuid"
+    done
 }
 
 do_install() {
     check_deps
     check_shell_version
     migrate_legacy
+    remove_legacy_installs
     run_tests
     compile_schemas
 
@@ -423,16 +434,42 @@ do_zip() {
     check_deps
     run_tests
     compile_schemas
-    local zip="$(dirname "$SRC_DIR")/${UUID}.shell-extension.zip"
-    rm -f "$zip"
-    # A loja recebe só o que a extensão precisa para rodar: sem testes, sem
-    # carimbo de build local, sem notas internas de desenvolvimento.
-    ( cd "$SRC_DIR" && zip -qr "$zip" . \
-        -x '*.git*' 'tests/*' 'BUILD' 'context.md' )
+
+    local out="$(dirname "$SRC_DIR")"
+    rm -f "$out/${UUID}.shell-extension.zip"
+
+    # `gnome-extensions pack` é a ferramenta oficial: valida o metadata,
+    # embute o schema e monta o layout que o extensions.gnome.org espera
+    # (metadata.json na raiz do zip). O empacotamento manual com `zip` não
+    # valida nada e é fácil errar a estrutura.
+    gnome-extensions pack "$SRC_DIR" \
+        --extra-source=lib \
+        --extra-source=ui \
+        --schema="schemas/org.gnome.shell.extensions.gcalendar.gschema.xml" \
+        --out-dir="$out" --force \
+        || err "Empacotamento falhou"
+
+    local zip="$out/${UUID}.shell-extension.zip"
+    ok "Pacote criado: $zip ($(du -h "$zip" | cut -f1))"
+
+    # A listagem é capturada antes de ser filtrada: com `set -o pipefail`, um
+    # `grep -q` fecha o pipe ao casar, o unzip leva SIGPIPE e o pipeline
+    # inteiro retorna erro — mesmo tendo encontrado o que procurava.
+    local listing
+    listing="$(unzip -l "$zip")"
+
     echo "  conteúdo:"
-    unzip -l "$zip" | awk 'NR>3 && NF>3 {print "    " $4}' | grep -v '/$' | sort
-    ok "Pacote criado: $zip"
-    echo "Envie em https://extensions.gnome.org/upload/"
+    awk 'NR>3 && NF>3 && $4 !~ /\/$/ {print "    " $4}' <<<"$listing" | sort
+
+    # A loja rejeita bundle sem metadata.json na raiz.
+    if grep -qE ' metadata\.json$' <<<"$listing"; then
+        ok "metadata.json na raiz do bundle"
+    else
+        err "metadata.json não está na raiz — a loja vai rejeitar"
+    fi
+
+    echo
+    echo "  Envie em: https://extensions.gnome.org/upload/"
 }
 
 case "${1:-install}" in

@@ -1,7 +1,7 @@
 {
   "name": "GCalendar Widget",
   "description": "Widget de calendário na área de trabalho integrado ao Google Agenda: navegação por mês, eventos do dia, criação, edição e exclusão de eventos, sincronização automática e notificações.\n\nRequer credenciais OAuth próprias: crie um projeto no Google Cloud Console, ative a Google Calendar API e gere um ID de cliente do tipo \"Aplicativo para computador\". O Client Secret e o token de atualização ficam no GNOME Keyring; nada sensível é gravado em texto claro.",
-  "uuid": "gcalendar@extension",
+  "uuid": "gcalendar@pvss.dev.br",
   "shell-version": [
     "46",
     "47"
