@@ -1,6 +1,7 @@
 import {describe, it, assert, assertEqual, assertDeepEqual} from './harness.js';
 import {
     monthGridDates, isInDisplayedMonth, GRID_CELLS, GRID_ROWS, GRID_COLS,
+    shiftMonth,
 } from '../lib/monthLayout.js';
 import {dayKey} from '../lib/utils.js';
 
@@ -83,5 +84,52 @@ describe('monthLayout · altura estável da grade', () => {
         assert(!isInDisplayedMonth(new Date(2025, 11, 31), viewDate));
         assert(!isInDisplayedMonth(new Date(2026, 1, 1), viewDate));
         assert(!isInDisplayedMonth(new Date(2027, 0, 15), viewDate), 'ano diferente');
+    });
+});
+
+describe('monthLayout · navegação leva o dia selecionado junto', () => {
+    it('mantém o número do dia ao avançar de mês', () => {
+        const {viewDate, selectedDate} = shiftMonth(
+            new Date(2026, 8, 1), new Date(2026, 8, 7), 1);
+        assertEqual(dayKey(viewDate), '2026-10-01');
+        assertEqual(dayKey(selectedDate), '2026-10-07',
+            'o dia selecionado precisa estar no mês exibido');
+    });
+
+    it('encolhe quando o mês destino é mais curto', () => {
+        // Sem o encolhimento, o Date "conserta" 31/02 para 03/03 e o dia
+        // selecionado cairia fora do mês exibido.
+        const {viewDate, selectedDate} = shiftMonth(
+            new Date(2026, 0, 1), new Date(2026, 0, 31), 1);
+        assertEqual(dayKey(viewDate), '2026-02-01');
+        assertEqual(dayKey(selectedDate), '2026-02-28');
+    });
+
+    it('respeita o 29 de fevereiro em ano bissexto', () => {
+        const {selectedDate} = shiftMonth(
+            new Date(2024, 0, 1), new Date(2024, 0, 31), 1);
+        assertEqual(dayKey(selectedDate), '2024-02-29');
+    });
+
+    it('atravessa a virada de ano nos dois sentidos', () => {
+        assertEqual(dayKey(shiftMonth(new Date(2026, 11, 1), new Date(2026, 11, 15), 1).selectedDate),
+            '2027-01-15');
+        assertEqual(dayKey(shiftMonth(new Date(2026, 0, 1), new Date(2026, 0, 15), -1).selectedDate),
+            '2025-12-15');
+    });
+
+    it('o dia selecionado sempre pertence ao mês exibido, em qualquer salto', () => {
+        // Varre um ano inteiro partindo do dia 31, que é o caso que mais quebra.
+        for (let month = 0; month < 12; month++) {
+            for (const delta of [-1, 1]) {
+                const view = new Date(2026, month, 1);
+                const selected = new Date(2026, month, Math.min(31,
+                    new Date(2026, month + 1, 0).getDate()));
+                const moved = shiftMonth(view, selected, delta);
+                assertEqual(moved.selectedDate.getMonth(), moved.viewDate.getMonth(),
+                    `mês ${month + 1} com delta ${delta}`);
+                assertEqual(moved.selectedDate.getFullYear(), moved.viewDate.getFullYear());
+            }
+        }
     });
 });

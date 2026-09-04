@@ -1,6 +1,7 @@
-import {describe, it, assert, assertEqual, assertDeepEqual} from './harness.js';
+import {describe, it, assert, assertEqual, assertDeepEqual, assertThrows} from './harness.js';
 import {
-    normalizeEvent, normalizeCalendar, spannedDayKeys, draftToGoogle, compareEvents,
+    CalendarService, normalizeEvent, normalizeCalendar, spannedDayKeys,
+    draftToGoogle, compareEvents,
 } from '../lib/calendarService.js';
 import {dayKey} from '../lib/utils.js';
 
@@ -200,5 +201,120 @@ describe('calendarService · normalização de agendas', () => {
             assertEqual(normalizeCalendar({id: 'x', accessRole: role}).canWrite, false, role);
         }
         assertEqual(normalizeCalendar({id: 'x', accessRole: 'writer'}).canWrite, true);
+    });
+});
+
+describe('calendarService · múltiplas contas do GNOME Online Accounts', () => {
+    /** Dublê de conta do GOA: só precisa de id, email e token. */
+    const makeAccount = (id, email) => ({
+        id, email,
+        getAccessToken: async () => `token-${id}`,
+        ensureCredentials: async () => {},
+    });
+
+    /** Dublê da API que registra com qual conta cada chamada foi feita. */
+    function makeApi(calendarsByAccount) {
+        return {
+            calls: [],
+            async listCalendars(account) {
+                this.calls.push(['listCalendars', account.id]);
+                return calendarsByAccount[account.id] ?? [];
+            },
+            async listEvents(account, calendarId) {
+                this.calls.push(['listEvents', account.id, calendarId]);
+                return [];
+            },
+            async insertEvent(account, calendarId, body) {
+                this.calls.push(['insertEvent', account.id, calendarId]);
+                return {id: 'novo', summary: body.summary,
+                    start: {date: '2026-03-15'}, end: {date: '2026-03-16'}};
+            },
+            async deleteEvent(account, calendarId, eventId) {
+                this.calls.push(['deleteEvent', account.id, calendarId, eventId]);
+            },
+        };
+    }
+
+    const makeAuth = accounts => ({getCalendarAccounts: () => accounts});
+
+    it('agrega as agendas de todas as contas conectadas', async () => {
+        const api = makeApi({
+            a1: [{id: 'cal-a', summary: 'Trabalho', accessRole: 'owner'}],
+            a2: [{id: 'cal-b', summary: 'Pessoal', accessRole: 'owner'}],
+        });
+        const service = new CalendarService({api, auth: makeAuth([
+            makeAccount('a1', 'um@gmail.com'), makeAccount('a2', 'dois@gmail.com'),
+        ])});
+
+        const calendars = await service.listCalendars();
+
+        assertEqual(calendars.length, 2);
+        assertDeepEqual(calendars.map(c => c.accountId).sort(), ['a1', 'a2']);
+        assertEqual(calendars.find(c => c.id === 'cal-b').accountEmail, 'dois@gmail.com');
+    });
+
+    it('usa o token da conta dona de cada agenda', async () => {
+        // O erro clássico do multi-conta é pedir a agenda de uma conta com o
+        // token de outra — resultado seria 404 silencioso.
+        const api = makeApi({
+            a1: [{id: 'cal-a', summary: 'A', accessRole: 'owner'}],
+            a2: [{id: 'cal-b', summary: 'B', accessRole: 'owner'}],
+        });
+        const service = new CalendarService({api, auth: makeAuth([
+            makeAccount('a1', 'um@gmail.com'), makeAccount('a2', 'dois@gmail.com'),
+        ])});
+        await service.listCalendars();
+        api.calls.length = 0;
+
+        await service.listEvents(['cal-b', 'cal-a'], new Date(2026, 2, 1), new Date(2026, 2, 31));
+
+        const pares = api.calls.map(([, accountId, calendarId]) => `${accountId}→${calendarId}`);
+        assert(pares.includes('a2→cal-b'), `esperava a2→cal-b, veio ${pares}`);
+        assert(pares.includes('a1→cal-a'), `esperava a1→cal-a, veio ${pares}`);
+    });
+
+    it('escrita também vai pela conta certa', async () => {
+        const api = makeApi({a2: [{id: 'cal-b', summary: 'B', accessRole: 'owner'}]});
+        const service = new CalendarService({api,
+            auth: makeAuth([makeAccount('a2', 'dois@gmail.com')])});
+        await service.listCalendars();
+        api.calls.length = 0;
+
+        await service.createEvent('cal-b', {title: 'x', allDay: true,
+            start: new Date(2026, 2, 15), end: new Date(2026, 2, 15)});
+        await service.deleteEvent('cal-b', 'e1');
+
+        assertDeepEqual(api.calls, [
+            ['insertEvent', 'a2', 'cal-b'],
+            ['deleteEvent', 'a2', 'cal-b', 'e1'],
+        ]);
+    });
+
+    it('agenda de uma conta desconectada falha com erro claro', async () => {
+        const api = makeApi({a1: [{id: 'cal-a', summary: 'A', accessRole: 'owner'}]});
+        const service = new CalendarService({api,
+            auth: makeAuth([makeAccount('a1', 'um@gmail.com')])});
+        await service.listCalendars();
+
+        await assertThrows(() => service.createEvent('cal-inexistente', {title: 'x'}),
+            'deveria recusar agenda sem conta');
+    });
+
+    it('falha de uma conta não impede as agendas das outras', async () => {
+        const api = makeApi({a2: [{id: 'cal-b', summary: 'B', accessRole: 'owner'}]});
+        const original = api.listCalendars.bind(api);
+        api.listCalendars = async account => {
+            if (account.id === 'a1')
+                throw new Error('conta com credencial expirada');
+            return original(account);
+        };
+        const service = new CalendarService({api, auth: makeAuth([
+            makeAccount('a1', 'um@gmail.com'), makeAccount('a2', 'dois@gmail.com'),
+        ])});
+
+        const calendars = await service.listCalendars();
+
+        assertEqual(calendars.length, 1);
+        assertEqual(calendars[0].id, 'cal-b');
     });
 });

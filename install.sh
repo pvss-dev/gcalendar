@@ -11,7 +11,7 @@
 #     ./install.sh --status   diz se o Shell já carregou a versão instalada
 #     ./install.sh --diagnose relatório para depurar cliques que não chegam
 #     ./install.sh --debug on|off   liga o diagnóstico no journal
-#     ./install.sh --forget   apaga cache, agendas e token da conta (mantém o app)
+#     ./install.sh --forget   apaga o cache local de eventos e agendas
 # ============================================================
 set -euo pipefail
 
@@ -57,6 +57,15 @@ check_shell_version() {
         warn "GNOME Shell $running não está na lista suportada ($supported)."
         warn "A extensão provavelmente não vai carregar."
     fi
+}
+
+# Sem pipe de propósito: `grep -q` fecha o pipe assim que encontra, o produtor
+# leva SIGPIPE e, sob `set -o pipefail`, o pipeline retorna erro justamente
+# quando a busca deu certo.
+is_enabled() {
+    local lista
+    lista="$(gnome-extensions list --enabled 2>/dev/null || true)"
+    grep -qx "$UUID" <<<"$lista"
 }
 
 # Em X11 dá para reiniciar o Shell na hora; em Wayland só relogando.
@@ -163,7 +172,7 @@ do_install() {
     # disabled-extensions; sem restaurar isso depois, a reinstalação deixa a
     # extensão silenciosamente desligada.
     local was_enabled=no
-    if gnome-extensions list --enabled 2>/dev/null | grep -qx "$UUID"; then
+    if is_enabled; then
         was_enabled=yes
     fi
 
@@ -263,7 +272,7 @@ do_status() {
     # Extensão desligada não chama enable(), logo não registra carimbo algum —
     # e o `running` acima seria o de uma sessão anterior. Sem este aviso, a
     # comparação de builds engana.
-    if ! gnome-extensions list --enabled 2>/dev/null | grep -qx "$UUID"; then
+    if ! is_enabled; then
         warn "A extensão está DESABILITADA — o carimbo acima é de antes."
         echo  "  Ligue com:  gnome-extensions enable $UUID"
         return
@@ -321,6 +330,11 @@ do_diagnose() {
         | grep -E "área dos dias|altura do widget" | tail -12 \
         || echo "  (nenhuma)"
     echo
+    echo "── notificações enviadas (journal) ──"
+    journalctl --user -b 0 -o cat 2>/dev/null \
+        | grep -E 'notificação enviada' | tail -5 \
+        || echo "  (nenhuma)"
+    echo
     echo "── decisões de região de entrada (journal) ──"
     journalctl --user -b 0 -o cat 2>/dev/null \
         | grep -E 'região de entrada|habilitada — build' | tail -15 \
@@ -335,11 +349,10 @@ do_diagnose() {
         || echo "  (nenhum)"
 }
 
-# Remove tudo o que a extensão guardou sobre a CONTA, mantendo a extensão
-# instalada e o Client ID (que é credencial do aplicativo, não da conta).
+# Remove o que a extensão guardou localmente sobre a conta. A conta do Google
+# em si pertence ao sistema (Contas Online) e não é tocada aqui.
 do_forget() {
     local cache="$HOME/.cache/$UUID"
-    local schema="org.gnome.shell.extensions.gcalendar"
 
     if [[ -d "$cache" ]]; then
         rm -rf "$cache"
@@ -352,9 +365,8 @@ do_forget() {
     dconf reset "/org/gnome/shell/extensions/gcalendar/last-sync"
     ok "IDs de agenda e horário de sincronização apagados do dconf"
 
-    # secret-tool é do pacote libsecret-tools e pode não estar instalado;
-    # gjs sempre está (a extensão depende dele), então falamos com o keyring
-    # pela mesma API que a extensão usa.
+    # Resíduo das versões que faziam o próprio OAuth. A extensão atual não
+    # grava segredo nenhum, mas quem vem da v2 ainda tem isto no chaveiro.
     local script
     script="$(mktemp --suffix=.js)"
     cat > "$script" <<'GJS'
@@ -362,72 +374,47 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Secret from 'gi://Secret';
 
-Gio._promisify(Secret, 'password_clear', 'password_clear_finish');
 Gio._promisify(Secret, 'password_lookup', 'password_lookup_finish');
+Gio._promisify(Secret, 'password_clear', 'password_clear_finish');
 
-const SCHEMA = new Secret.Schema('org.gnome.shell.extensions.gcalendar',
-    Secret.SchemaFlags.NONE, {key: Secret.SchemaAttributeType.STRING});
-
-// O Client Secret é credencial do aplicativo, não da conta: só sai com --all.
-const keys = GLib.getenv('GCAL_FORGET_ALL') === '1'
-    ? ['refresh-token', 'client-secret']
-    : ['refresh-token'];
+const attrs = {key: Secret.SchemaAttributeType.STRING};
+const schemas = ['org.gnome.shell.extensions.gcalendar',
+    'org.gnome.shell.extensions.zorin-gcalendar']
+    .map(id => new Secret.Schema(id, Secret.SchemaFlags.NONE, attrs));
 
 const loop = GLib.MainLoop.new(null, false);
-let failed = 0;
+let removed = 0;
 
 (async () => {
-    for (const key of keys) {
-        try {
-            const had = await Secret.password_lookup(SCHEMA, {key}, null);
-            await Secret.password_clear(SCHEMA, {key}, null);
-            print(had ? `      ${key}: removido` : `      ${key}: já não existia`);
-        } catch (e) {
-            failed++;
-            print(`      ${key}: FALHOU — ${e.message}`);
+    for (const schema of schemas) {
+        for (const key of ['refresh-token', 'client-secret', 'access-token']) {
+            try {
+                if (await Secret.password_lookup(schema, {key}, null)) {
+                    await Secret.password_clear(schema, {key}, null);
+                    print(`      ${key}: removido`);
+                    removed++;
+                }
+            } catch (e) {
+                print(`      ${key}: FALHOU — ${e.message}`);
+            }
         }
     }
+    if (removed === 0)
+        print('      nada a remover');
     loop.quit();
 })();
 
 loop.run();
-imports.system.exit(failed ? 1 : 0);
 GJS
 
-    echo "  GNOME Keyring:"
-    if gjs -m "$script"; then
-        ok "Keyring limpo"
-    else
-        warn "Alguma entrada não pôde ser removida (chaveiro bloqueado?)"
-    fi
+    echo "  GNOME Keyring (resíduo de versões antigas):"
+    gjs -m "$script" || warn "Alguma entrada não pôde ser removida (chaveiro bloqueado?)"
     rm -f "$script"
 
-    if [[ "${GCAL_FORGET_ALL:-}" != 1 ]]; then
-        warn "Mantidos: Client ID e Client Secret (credenciais do aplicativo)."
-        echo  "  Para apagar tudo:  GCAL_FORGET_ALL=1 ./install.sh --forget"
-    else
-        dconf reset "/org/gnome/shell/extensions/gcalendar/client-id"
-        ok "Client ID também removido"
-    fi
-}
-
-# A extensão é silenciosa por padrão (exigência prática da revisão do
-# extensions.gnome.org). Isto liga o diagnóstico sem reiniciar o Shell.
-do_debug() {
-    local value="${1:-}"
-    case "$value" in
-        on|true|1)   value=true ;;
-        off|false|0) value=false ;;
-        *) err "Use: ./install.sh --debug on|off" ;;
-    esac
-    [[ -d "$EXT_DIR/schemas" ]] || err "Extensão não instalada — rode ./install.sh antes"
-    gsettings --schemadir "$EXT_DIR/schemas" \
-        set org.gnome.shell.extensions.gcalendar debug-logging "$value"
-    if [[ "$value" == true ]]; then
-        ok "Diagnóstico ligado — veja com ./install.sh --diagnose"
-    else
-        ok "Diagnóstico desligado (só erros vão para o journal)"
-    fi
+    echo
+    warn "A conta do Google NÃO é removida por aqui."
+    echo  "  Ela pertence ao sistema: Configurações → Contas Online."
+    echo  "  Este comando apaga só o que a extensão guardou localmente."
 }
 
 do_zip() {

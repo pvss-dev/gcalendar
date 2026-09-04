@@ -1,11 +1,9 @@
 /**
  * utils.js — helpers puros.
  *
- * Só depende de GLib/Gio, nunca do Shell: pode ser importado por prefs.js
+ * Sem dependência de GLib nem do Shell: pode ser importado por prefs.js
  * (processo separado) e pelos testes rodando em `gjs` puro.
  */
-import GLib from 'gi://GLib';
-import Gio from 'gi://Gio';
 
 /* ══════════════════════════ Strings ══════════════════════════ */
 
@@ -26,73 +24,6 @@ export function buildQueryString(obj) {
         .filter(([, v]) => v !== undefined && v !== null && v !== '')
         .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
         .join('&');
-}
-
-export function parseQueryString(str) {
-    const result = {};
-    const qs = str.includes('?') ? str.slice(str.indexOf('?') + 1) : str;
-    for (const part of qs.split('&')) {
-        if (!part)
-            continue;
-        const idx = part.indexOf('=');
-        const rawKey = idx === -1 ? part : part.slice(0, idx);
-        const rawVal = idx === -1 ? '' : part.slice(idx + 1);
-        // '+' significa espaço em application/x-www-form-urlencoded.
-        const dec = s => decodeURIComponent(s.replace(/\+/g, ' '));
-        try {
-            result[dec(rawKey)] = dec(rawVal);
-        } catch {
-            // Percent-encoding malformado: ignora o par em vez de derrubar o parse.
-        }
-    }
-    return result;
-}
-
-/* ══════════════════════════ Criptografia (PKCE) ══════════════════════════ */
-
-/**
- * Bytes aleatórios de qualidade criptográfica.
- *
- * O GJS não tem WebCrypto e Math.random() não serve para o `code_verifier`
- * nem para o `state` (proteção CSRF), então lemos de /dev/urandom.
- */
-export function randomBytes(count) {
-    const stream = Gio.File.new_for_path('/dev/urandom').read(null);
-    try {
-        const out = new Uint8Array(count);
-        let filled = 0;
-        while (filled < count) {
-            const chunk = stream.read_bytes(count - filled, null).get_data();
-            if (!chunk || chunk.length === 0)
-                throw new Error('/dev/urandom retornou 0 bytes');
-            out.set(chunk, filled);
-            filled += chunk.length;
-        }
-        return out;
-    } finally {
-        stream.close(null);
-    }
-}
-
-export function base64UrlEncode(bytes) {
-    return GLib.base64_encode(bytes)
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
-}
-
-/** String aleatória segura no alfabeto base64url (RFC 7636 §4.1). */
-export function randomToken(byteLength = 32) {
-    return base64UrlEncode(randomBytes(byteLength));
-}
-
-/** SHA-256 do verifier em base64url — o `code_challenge` do PKCE S256. */
-export function sha256Base64Url(str) {
-    const hex = GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, str, -1);
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < bytes.length; i++)
-        bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    return base64UrlEncode(bytes);
 }
 
 /* ══════════════════════════ Datas ══════════════════════════ */

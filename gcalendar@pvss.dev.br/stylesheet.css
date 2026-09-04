@@ -144,9 +144,12 @@
     padding: 0 4px;
 }
 
+/* padding esquerdo 6px + os 4px da lista = 10px, o mesmo recuo do cabeçalho
+   do dia acima. Assim título do evento e "Friday, September 4" começam na
+   mesma coluna. */
 .gcal-event {
     border-radius: 8px;
-    padding: 6px 6px;
+    padding: 6px;
     transition-duration: 100ms;
 }
 .gcal-event:hover { background-color: rgba(255, 255, 255, 0.09); }

@@ -1,8 +1,7 @@
 import {describe, it, assert, assertEqual} from './harness.js';
 import {
     parseGoogleDate, dayKey, addDays, startOfMonth, endOfMonth,
-    daysInMonth, sameDay, toRfc3339, buildQueryString, parseQueryString,
-    sha256Base64Url, base64UrlEncode, randomBytes, randomToken, truncate,
+    daysInMonth, sameDay, toRfc3339, buildQueryString, truncate,
     eventColour, safeColour, weekdayAbbreviations, minutesUntil,
 } from '../lib/utils.js';
 
@@ -69,63 +68,6 @@ describe('utils · datas', () => {
     it('minutesUntil é negativo no passado', () => {
         assert(minutesUntil(new Date(Date.now() - 600_000)) <= -9);
         assert(minutesUntil(new Date(Date.now() + 600_000)) >= 9);
-    });
-});
-
-describe('utils · query strings', () => {
-    it('codifica valores com caracteres especiais', () => {
-        assertEqual(buildQueryString({scope: 'a b', q: 'c&d=e'}),
-            'scope=a%20b&q=c%26d%3De');
-    });
-
-    it('omite valores vazios, nulos e indefinidos', () => {
-        assertEqual(buildQueryString({a: '1', b: '', c: null, d: undefined}), 'a=1');
-    });
-
-    it('faz round-trip de valores com & e =', () => {
-        const original = {code: '4/0Ab&x=y', state: 'a+b c'};
-        const parsed = parseQueryString(buildQueryString(original));
-        assertEqual(parsed.code, original.code);
-        assertEqual(parsed.state, original.state);
-    });
-
-    it('aceita caminho completo com "?" (linha de requisição HTTP)', () => {
-        const parsed = parseQueryString('/?code=abc&state=xyz');
-        assertEqual(parsed.code, 'abc');
-        assertEqual(parsed.state, 'xyz');
-    });
-
-    it('ignora pares malformados em vez de estourar', () => {
-        const parsed = parseQueryString('/?ok=1&%ZZ=2&sozinho');
-        assertEqual(parsed.ok, '1');
-    });
-});
-
-describe('utils · PKCE', () => {
-    it('sha256Base64Url bate com o vetor de teste da RFC 7636', () => {
-        // Apêndice B da RFC 7636.
-        const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
-        assertEqual(sha256Base64Url(verifier),
-            'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
-    });
-
-    it('base64url não contém +, / nem =', () => {
-        const encoded = base64UrlEncode(new Uint8Array([251, 255, 254, 0, 1, 2]));
-        assert(!/[+/=]/.test(encoded), `padding vazou: ${encoded}`);
-    });
-
-    it('randomBytes devolve o tamanho pedido e varia entre chamadas', () => {
-        const a = randomBytes(32);
-        const b = randomBytes(32);
-        assertEqual(a.length, 32);
-        assert(a.some((byte, i) => byte !== b[i]), 'duas leituras idênticas');
-    });
-
-    it('randomToken respeita o comprimento mínimo do code_verifier', () => {
-        // RFC 7636 §4.1 exige entre 43 e 128 caracteres.
-        const token = randomToken(32);
-        assert(token.length >= 43 && token.length <= 128, `tamanho ${token.length}`);
-        assert(/^[A-Za-z0-9\-._~]+$/.test(token), 'caracteres fora do alfabeto');
     });
 });
 

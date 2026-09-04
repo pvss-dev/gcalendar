@@ -13,32 +13,18 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {SecretStore, SecretKey} from './lib/secretStore.js';
+import Goa from 'gi://Goa';
 
-const SECRET_SAVE_DEBOUNCE_MS = 700;
 // Mesma ordem das opções mostradas na combo de camada.
 const LAYERS = ['desktop', 'auto', 'top'];
-const CONSOLE_URL = 'https://console.cloud.google.com/apis/credentials';
 
 export default class ZorinGCalendarPrefs extends ExtensionPreferences {
 
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
-        const secrets = new SecretStore();
-
-        // Cancela trabalho pendente quando a janela fecha, para não deixar
-        // timeouts e chamadas ao keyring rodando sozinhos.
-        this._pendingSaveId = 0;
-        window.connect('close-request', () => {
-            if (this._pendingSaveId) {
-                GLib.source_remove(this._pendingSaveId);
-                this._pendingSaveId = 0;
-            }
-            return false;
-        });
 
         window.set_default_size(640, 720);
-        window.add(this._accountPage(settings, secrets));
+        window.add(this._accountPage());
         window.add(this._calendarsPage(settings));
         window.add(this._appearancePage(settings));
         window.add(this._behaviourPage(settings));
@@ -46,121 +32,85 @@ export default class ZorinGCalendarPrefs extends ExtensionPreferences {
 
     /* ══════════════════════ Conta ══════════════════════ */
 
-    _accountPage(settings, secrets) {
+    _accountPage() {
         const page = new Adw.PreferencesPage({
             title: 'Conta',
             icon_name: 'avatar-default-symbolic',
         });
 
         const group = new Adw.PreferencesGroup({
-            title: 'Credenciais OAuth 2.0',
-            description:
-                'A extensão usa suas próprias credenciais do Google, criadas em ' +
-                'console.cloud.google.com:\n' +
-                '1. Crie um projeto e ative a "Google Calendar API".\n' +
-                '2. Em Credenciais → Criar → ID do cliente OAuth, escolha o tipo ' +
-                '"Aplicativo para computador".\n' +
-                '3. Cole abaixo o Client ID e o Client Secret gerados.',
-        });
-
-        const clientIdRow = new Adw.EntryRow({title: 'Client ID'});
-        settings.bind('client-id', clientIdRow, 'text', Gio.SettingsBindFlags.DEFAULT);
-        group.add(clientIdRow);
-
-        const secretRow = new Adw.PasswordEntryRow({title: 'Client Secret'});
-        this._bindSecret(secretRow, secrets, SecretKey.CLIENT_SECRET);
-        group.add(secretRow);
-
-        const consoleRow = new Adw.ActionRow({
-            title: 'Google Cloud Console',
-            subtitle: 'Abrir a página de credenciais',
-        });
-        const consoleButton = new Gtk.LinkButton({
-            uri: CONSOLE_URL,
-            label: 'Abrir',
-            valign: Gtk.Align.CENTER,
-        });
-        consoleRow.add_suffix(consoleButton);
-        consoleRow.set_activatable_widget(consoleButton);
-        group.add(consoleRow);
-        page.add(group);
-
-        const sessionGroup = new Adw.PreferencesGroup({
-            title: 'Sessão',
-            description: 'O Client Secret e o refresh token ficam no GNOME Keyring, ' +
-                         'nunca em texto claro no dconf.',
+            title: 'Conta do Google',
+            description: 'A extensão usa a conta configurada em Contas Online do ' +
+                         'GNOME. Ela não guarda senhas nem credenciais próprias: ' +
+                         'o acesso é o mesmo que o restante do sistema já usa.',
         });
 
         const statusRow = new Adw.ActionRow({
-            title: 'Conta conectada',
+            title: 'Estado',
             subtitle: 'Verificando…',
         });
-        const signOutButton = new Gtk.Button({
-            label: 'Desconectar',
+        const openButton = new Gtk.Button({
+            label: 'Abrir Contas Online',
             valign: Gtk.Align.CENTER,
-            sensitive: false,
         });
-        signOutButton.add_css_class('destructive-action');
-        statusRow.add_suffix(signOutButton);
-        sessionGroup.add(statusRow);
-        page.add(sessionGroup);
+        openButton.add_css_class('suggested-action');
+        openButton.connect('clicked', () => this._openOnlineAccounts(statusRow));
+        statusRow.add_suffix(openButton);
+        statusRow.set_activatable_widget(openButton);
+        group.add(statusRow);
+        page.add(group);
 
-        const refreshStatus = async () => {
-            const token = await secrets.get(SecretKey.REFRESH_TOKEN);
-            statusRow.set_subtitle(token
-                ? 'Conectada — o widget está autorizado a acessar sua agenda.'
-                : 'Nenhuma conta conectada. Use "Entrar com Google" no widget.');
-            signOutButton.set_sensitive(!!token);
-        };
-
-        signOutButton.connect('clicked', () => {
-            signOutButton.set_sensitive(false);
-            // Apagar o keyring daqui deixaria a extensão com o token ainda em
-            // memória e sem revogá-lo no Google. Este pedido faz a extensão
-            // executar a desconexão completa do lado dela.
-            settings.set_int64('sign-out-requested', Math.floor(Date.now() / 1000));
-            statusRow.set_subtitle('Desconectando…');
-        });
-
-        // A extensão zera a chave quando termina de desconectar; usamos isso
-        // como aviso de conclusão, sem ficar consultando o keyring em laço.
-        settings.connect('changed::sign-out-requested', () => {
-            if (settings.get_int64('sign-out-requested') === 0)
-                refreshStatus().catch(() => {});
-        });
-
-        refreshStatus().catch(err => statusRow.set_subtitle(`Keyring indisponível: ${err.message}`));
+        this._refreshAccountStatus(statusRow);
         return page;
     }
 
     /**
-     * Liga uma linha de senha ao keyring: carrega ao abrir e grava com um
-     * pequeno atraso, para não escrever a cada tecla digitada.
+     * Lê as contas direto do GOA.
+     *
+     * As preferências rodam em outro processo, então não dá para perguntar à
+     * extensão — mas o serviço do GOA é do sistema e responde aos dois.
      */
-    _bindSecret(row, secrets, key) {
-        let loading = true;
-
-        secrets.get(key)
-            .then(value => {
-                row.set_text(value ?? '');
-                loading = false;
-            })
-            .catch(() => {
-                loading = false;
-            });
-
-        row.connect('notify::text', () => {
-            if (loading)
+    _refreshAccountStatus(statusRow) {
+        Goa.Client.new(null, (client, result) => {
+            let accounts = [];
+            let disabled = [];
+            try {
+                const goaClient = Goa.Client.new_finish(result);
+                for (const object of goaClient.get_accounts()) {
+                    const account = object.get_account();
+                    if (account.provider_type !== 'google')
+                        continue;
+                    if (account.calendar_disabled)
+                        disabled.push(account.presentation_identity);
+                    else
+                        accounts.push(account.presentation_identity);
+                }
+            } catch (err) {
+                statusRow.set_subtitle(`Contas Online indisponível: ${err.message}`);
                 return;
-            if (this._pendingSaveId)
-                GLib.source_remove(this._pendingSaveId);
-            this._pendingSaveId = GLib.timeout_add(
-                GLib.PRIORITY_DEFAULT, SECRET_SAVE_DEBOUNCE_MS, () => {
-                    this._pendingSaveId = 0;
-                    secrets.set(key, row.get_text()).catch(() => {});
-                    return GLib.SOURCE_REMOVE;
-                });
+            }
+
+            if (accounts.length)
+                statusRow.set_subtitle(`Conectada: ${accounts.join(', ')}`);
+            else if (disabled.length)
+                statusRow.set_subtitle(
+                    `${disabled.join(', ')} — ative o Calendário para esta conta`);
+            else
+                statusRow.set_subtitle('Nenhuma conta Google conectada');
         });
+    }
+
+    _openOnlineAccounts(statusRow) {
+        const app = Gio.DesktopAppInfo.new('gnome-online-accounts-panel.desktop');
+        try {
+            if (app)
+                app.launch([], null);
+            else
+                Gio.Subprocess.new(['gnome-control-center', 'online-accounts'],
+                    Gio.SubprocessFlags.NONE);
+        } catch (err) {
+            statusRow.set_subtitle(`Não foi possível abrir: ${err.message}`);
+        }
     }
 
     /* ══════════════════════ Agendas ══════════════════════ */

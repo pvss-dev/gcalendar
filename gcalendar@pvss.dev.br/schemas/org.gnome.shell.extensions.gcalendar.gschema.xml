@@ -3,37 +3,30 @@
   <schema id="org.gnome.shell.extensions.gcalendar"
           path="/org/gnome/shell/extensions/gcalendar/">
 
-    <!-- ══ Credenciais ═════════════════════════════════════════════════
-         O Client ID de um cliente "Desktop app" não é secreto (RFC 8252).
-         O Client Secret e os tokens ficam no GNOME Keyring, nunca aqui.
-         As chaves abaixo marcadas como obsoletas existem só para migrar
-         instalações da versão 1, que gravava tudo em texto claro no dconf.
+    <!-- ══ Resíduo das versões anteriores ═════════════════════════════
+         Até a v2 a extensão fazia o próprio OAuth. Agora o token vem do
+         GNOME Online Accounts e nada disso é usado: as chaves seguem no
+         schema apenas para que clearLegacySecrets() possa esvaziá-las.
     -->
     <key name="client-id" type="s">
       <default>''</default>
-      <summary>Client ID do OAuth 2.0</summary>
-      <description>Identificador do cliente OAuth criado no Google Cloud Console.</description>
+      <summary>Obsoleto — a autenticação usa o GNOME Online Accounts</summary>
     </key>
-
     <key name="client-secret" type="s">
       <default>''</default>
-      <summary>Obsoleto — migrado para o GNOME Keyring</summary>
-      <description>Mantido apenas para migração automática da versão 1. Sempre vazio depois disso.</description>
+      <summary>Obsoleto — a extensão não guarda credenciais</summary>
     </key>
     <key name="access-token" type="s">
       <default>''</default>
-      <summary>Obsoleto — o access token não é mais persistido</summary>
-      <description>Mantido apenas para limpar resíduos da versão 1.</description>
+      <summary>Obsoleto — o token vem do GNOME Online Accounts</summary>
     </key>
     <key name="refresh-token" type="s">
       <default>''</default>
-      <summary>Obsoleto — migrado para o GNOME Keyring</summary>
-      <description>Mantido apenas para migração automática da versão 1. Sempre vazio depois disso.</description>
+      <summary>Obsoleto — a renovação é feita pelo GNOME Online Accounts</summary>
     </key>
     <key name="token-expiry" type="x">
       <default>0</default>
-      <summary>Obsoleto — a expiração vive em memória</summary>
-      <description>Mantido apenas para limpar resíduos da versão 1.</description>
+      <summary>Obsoleto</summary>
     </key>
 
     <!-- ══ Posição e aparência ═══════════════════════════════════════ -->
@@ -102,16 +95,6 @@
     <key name="last-sync" type="x">
       <default>0</default>
       <summary>Horário da última sincronização (epoch em segundos)</summary>
-    </key>
-
-    <key name="sign-out-requested" type="x">
-      <default>0</default>
-      <summary>Pedido de desconexão vindo das preferências</summary>
-      <description>
-        As preferências rodam em outro processo e não alcançam o objeto de
-        autenticação da extensão. Gravar aqui o horário do pedido faz a
-        extensão revogar o token no Google e limpar o keyring.
-      </description>
     </key>
 
     <key name="debug-logging" type="b">

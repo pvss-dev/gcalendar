@@ -14,7 +14,8 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import * as Log from './log.js';
 import {TimerPool} from './async.js';
-import {truncate, formatTime, minutesUntil, MS_PER_DAY} from './utils.js';
+import {truncate, formatTime, MS_PER_DAY} from './utils.js';
+import {selectDueNotifications, pruneNotified} from './notificationRules.js';
 
 const CHECK_INTERVAL_SECONDS = 60;
 const NOTIFIED_TTL_MS = MS_PER_DAY;
@@ -56,29 +57,19 @@ export class NotificationManager {
             return;
 
         const leadMinutes = this._settings.get_int('notification-minutes-before');
-        this._pruneNotified();
+        const now = Date.now();
+        pruneNotified(this._notified, now, NOTIFIED_TTL_MS);
 
-        for (const event of this._store.getImminentEvents(leadMinutes)) {
-            // A chave inclui o início: se o evento for remarcado, avisa de novo.
-            const key = `${event.calendarId}:${event.id}:${event.start.getTime()}`;
-            if (this._notified.has(key))
-                continue;
+        const due = selectDueNotifications({
+            events: this._store.getImminentEvents(leadMinutes),
+            leadMinutes,
+            now,
+            notified: this._notified,
+        });
 
-            const remaining = minutesUntil(event.start);
-            if (remaining < 0 || remaining > leadMinutes)
-                continue;
-
-            this._notify(event, remaining);
-            this._notified.set(key, Date.now());
-        }
-    }
-
-    /** Sem isto o Set de avisados crescia para sempre enquanto a sessão durasse. */
-    _pruneNotified() {
-        const cutoff = Date.now() - NOTIFIED_TTL_MS;
-        for (const [key, when] of this._notified) {
-            if (when < cutoff)
-                this._notified.delete(key);
+        for (const {event, key, minutesLeft} of due) {
+            this._notify(event, minutesLeft);
+            this._notified.set(key, now);
         }
     }
 
@@ -140,6 +131,8 @@ export class NotificationManager {
             }
 
             this._ensureSource().addNotification(notification);
+            Log.debug(`notificação enviada: "${event.title}" ` +
+                `(faltam ${minutesLeft} min)`);
         } catch (err) {
             Log.error(err, 'notificação');
         }

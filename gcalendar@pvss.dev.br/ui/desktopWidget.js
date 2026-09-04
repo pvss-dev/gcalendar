@@ -28,6 +28,7 @@ import {EventDialog} from './eventDialog.js';
 import {
     startOfDay, monthNames, formatTime, capitalize, formatDateLong, addDays,
 } from '../lib/utils.js';
+import {shiftMonth} from '../lib/monthLayout.js';
 
 const WIDGET_WIDTH = 340;
 
@@ -321,20 +322,25 @@ class DesktopWidget extends St.Widget {
 
         if (state === SyncState.UNCONFIGURED) {
             this._list.setMessage(
-                'Configure o Client ID do Google nas preferências para começar.',
-                {
-                    actionLabel: 'Abrir preferências',
-                    onAction: () => this._extension.openPreferences(),
-                });
+                'Contas Online do GNOME indisponível. A extensão precisa dele ' +
+                'para acessar sua agenda.',
+                {tone: 'error'});
             this._newButton.reactive = false;
             return;
         }
 
         if (state === SyncState.UNAUTHENTICATED) {
-            this._list.setMessage('Conecte sua conta do Google para ver os eventos.', {
-                actionLabel: 'Entrar com Google',
-                onAction: button => this._signIn(button),
-            });
+            // Distingue "não há conta" de "há conta, mas sem calendário": são
+            // ações diferentes no mesmo painel, e dizer qual poupa a procura.
+            const calendarOff = this._auth.hasAccountWithCalendarDisabled();
+            this._list.setMessage(
+                calendarOff
+                    ? 'Sua conta Google está conectada, mas com o Calendário desligado.'
+                    : 'Conecte sua conta do Google para ver os eventos.',
+                {
+                    actionLabel: calendarOff ? 'Ativar Calendário' : 'Conectar conta',
+                    onAction: () => this._openAccountSettings(),
+                });
             this._newButton.reactive = false;
             return;
         }
@@ -403,9 +409,19 @@ class DesktopWidget extends St.Widget {
         this._refresh();
     }
 
+    /**
+     * Navega de mês levando o dia selecionado junto.
+     *
+     * Sem isso a lista de baixo continuava mostrando um dia que já não está na
+     * grade — você via "7 de setembro" embaixo de outubro. É o comportamento
+     * do calendário do próprio Shell: mantém o número do dia e encolhe quando
+     * o mês destino é mais curto (31/01 → 28/02).
+     */
     _shiftMonth(delta) {
-        this._viewDate = new Date(
-            this._viewDate.getFullYear(), this._viewDate.getMonth() + delta, 1);
+        const moved = shiftMonth(this._viewDate, this._selectedDate, delta);
+        this._viewDate = moved.viewDate;
+        this._selectedDate = moved.selectedDate;
+
         this._store.setVisibleMonth(this._viewDate);
         this._refresh();
     }
@@ -422,23 +438,19 @@ class DesktopWidget extends St.Widget {
         this._store.sync().catch(err => Log.debug('sync manual:', err.message));
     }
 
-    async _signIn(button) {
-        button.reactive = false;
-        button.set_label('Abrindo o navegador…');
+    /**
+     * Abre Configurações → Contas Online.
+     *
+     * A extensão não faz login: quem cuida disso é o GNOME, com o cliente
+     * OAuth dele. Conectada a conta, o sinal do GOA chega e o widget se
+     * atualiza sozinho.
+     */
+    _openAccountSettings() {
         try {
-            await this._auth.signIn();
-            if (this._destroyed)
-                return;
-            await this._store.sync();
+            this._auth.openAccountSettings();
         } catch (err) {
-            if (this._destroyed)
-                return;
-            Log.error(err, 'login');
-            this._list.setMessage(userMessage(err), {
-                tone: 'error',
-                actionLabel: 'Tentar de novo',
-                onAction: retry => this._signIn(retry),
-            });
+            Log.error(err, 'abrir Contas Online');
+            this._list.setMessage(userMessage(err), {tone: 'error'});
         }
     }
 

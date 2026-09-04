@@ -12,6 +12,7 @@
  *    isRecurring, readOnly, dayKeys: string[]}
  */
 import * as Log from './log.js';
+import {ConfigError} from './errors.js';
 import {
     dayKey, addDays, startOfDay, parseGoogleDate, isValidDate,
     toRfc3339, systemTimeZone, eventColour, safeColour, MS_PER_DAY,
@@ -21,18 +22,57 @@ import {
 const MAX_SPAN_DAYS = 400;
 
 export class CalendarService {
-    constructor(api) {
+    constructor({api, auth}) {
         this._api = api;
+        this._auth = auth;
         this._calendarsById = new Map();
+        this._accountsById = new Map();
     }
 
     /* ══════════════════════ Leitura ══════════════════════ */
 
+    /**
+     * Agendas de TODAS as contas Google conectadas nas Contas Online.
+     *
+     * Cada agenda guarda a conta de origem, porque é ela quem fornece o token
+     * das chamadas seguintes. Se a mesma agenda compartilhada aparecer em duas
+     * contas, fica uma só — o usuário não quer ver duplicado.
+     */
     async listCalendars() {
-        const raw = await this._api.listCalendars();
-        const calendars = raw.map(normalizeCalendar);
+        const accounts = this._auth.getCalendarAccounts();
+        this._accountsById = new Map(accounts.map(a => [a.id, a]));
+
+        const results = await Promise.allSettled(
+            accounts.map(async account => {
+                const raw = await this._api.listCalendars(account);
+                return raw.map(item => ({
+                    ...normalizeCalendar(item),
+                    accountId: account.id,
+                    accountEmail: account.email,
+                }));
+            }));
+
+        const calendars = [];
+        results.forEach((result, index) => {
+            if (result.status === 'fulfilled')
+                calendars.push(...result.value);
+            else
+                Log.warn(`conta ${accounts[index].email}:`, result.reason?.message);
+        });
+
         this._calendarsById = new Map(calendars.map(c => [c.id, c]));
         return calendars;
+    }
+
+    /** Conta dona de uma agenda. @throws {ConfigError} se ela sumiu */
+    _accountFor(calendarId) {
+        const calendar = this._calendarsById.get(calendarId);
+        const account = calendar && this._accountsById.get(calendar.accountId);
+        if (!account) {
+            throw new ConfigError(
+                `A agenda ${calendarId} não pertence a nenhuma conta conectada.`);
+        }
+        return account;
     }
 
     /**
@@ -50,7 +90,8 @@ export class CalendarService {
         const timeMax = toRfc3339(to);
 
         const results = await Promise.allSettled(calendarIds.map(async id => {
-            const items = await this._api.listEvents(id, {timeMin, timeMax});
+            const items = await this._api.listEvents(this._accountFor(id), id,
+                {timeMin, timeMax});
             const calendar = this._calendarsById.get(id);
             return items
                 .filter(item => item.status !== 'cancelled')
@@ -73,7 +114,8 @@ export class CalendarService {
     /* ══════════════════════ Escrita ══════════════════════ */
 
     async createEvent(calendarId, draft) {
-        const raw = await this._api.insertEvent(calendarId, draftToGoogle(draft));
+        const raw = await this._api.insertEvent(this._accountFor(calendarId), calendarId,
+            draftToGoogle(draft));
         return normalizeEvent(raw, this._calendarsById.get(calendarId) ?? {id: calendarId});
     }
 
@@ -82,12 +124,13 @@ export class CalendarService {
      * preserva convidados, anexos e recorrência que a extensão não edita.
      */
     async updateEvent(calendarId, eventId, draft) {
-        const raw = await this._api.patchEvent(calendarId, eventId, draftToGoogle(draft));
+        const raw = await this._api.patchEvent(this._accountFor(calendarId), calendarId,
+            eventId, draftToGoogle(draft));
         return normalizeEvent(raw, this._calendarsById.get(calendarId) ?? {id: calendarId});
     }
 
     async deleteEvent(calendarId, eventId) {
-        await this._api.deleteEvent(calendarId, eventId);
+        await this._api.deleteEvent(this._accountFor(calendarId), calendarId, eventId);
     }
 
     getCalendar(id) {

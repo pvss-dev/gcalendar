@@ -33,3 +33,28 @@ export function isInDisplayedMonth(date, viewDate) {
     return date.getMonth() === viewDate.getMonth() &&
            date.getFullYear() === viewDate.getFullYear();
 }
+
+/**
+ * Navega `delta` meses mantendo o dia selecionado dentro do mês exibido.
+ *
+ * O dia é preservado pelo número e encolhido quando o mês destino é mais
+ * curto: de 31/01, um mês adiante é 28/02 (ou 29 em bissexto), não 03/03 como
+ * o `Date` faria sozinho. Assim a lista de eventos nunca mostra um dia que
+ * não está na grade.
+ *
+ * @returns {{viewDate: Date, selectedDate: Date}}
+ */
+export function shiftMonth(viewDate, selectedDate, delta) {
+    const year = viewDate.getFullYear();
+    const month = viewDate.getMonth();
+
+    // Dia 1 evita o "conserto" automático do Date ao somar meses.
+    const target = new Date(year, month + delta, 1);
+    const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+    const day = Math.min(selectedDate.getDate(), lastDay);
+
+    return {
+        viewDate: target,
+        selectedDate: new Date(target.getFullYear(), target.getMonth(), day),
+    };
+}

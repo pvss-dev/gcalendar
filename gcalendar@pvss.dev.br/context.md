@@ -36,12 +36,12 @@ extension.js                    ciclo de vida + composition root
 ├── lib/                        domínio e infraestrutura (sem St/Clutter)
 │   ├── log.js                  logging (GCAL_DEBUG=1 para detalhes)
 │   ├── errors.js               tipos de erro + mensagem ao usuário
-│   ├── utils.js                datas, fusos, PKCE, cores — puro
+│   ├── utils.js                datas, fusos, cores — JS puro, sem GI
 │   ├── eventFormat.js          textos e validação de formulário — puro
 │   ├── async.js                TimerPool: nenhum GLib source sem dono
 │   ├── http.js                 libsoup3 + Gio._promisify centralizado
-│   ├── secretStore.js          GNOME Keyring (libsecret)
-│   ├── googleAuth.js           OAuth 2.0 PKCE + loopback em porta efêmera
+│   ├── secretStore.js          limpa segredos das versões que faziam OAuth
+│   ├── goaAuth.js              contas e tokens via GNOME Online Accounts
 │   ├── googleCalendarApi.js    REST v3: paginação, retry, 401 → renova token
 │   ├── calendarService.js  ←── camada de abstração: JSON do Google → domínio
 │   └── eventStore.js           estado, índice por dia, cache, laço de sync
@@ -72,52 +72,55 @@ terça a quinta aparecer nos três dias.
 
 ## Autenticação
 
-Fluxo **Authorization Code + PKCE** (RFC 7636) com redirecionamento de loopback
-(RFC 8252 §7.3) — o recomendado para aplicativos nativos.
+**A extensão não tem credenciais próprias.** O token de acesso vem do **GNOME
+Online Accounts** (GOA), pela interface D-Bus `org.gnome.OnlineAccounts.OAuth2Based`.
 
-* Uma extensão do Shell não tem back-end, então **não existe segredo de
-  verdade**: o "client secret" de um cliente tipo *Desktop app* é público por
-  definição. Quem protege o fluxo é o PKCE.
-* O redirect usa `http://127.0.0.1:<porta efêmera>`. A porta é escolhida pelo
-  sistema a cada login (`add_any_inet_port`); a versão 1 fixava a 9004 e falhava
-  para sempre se algo mais a ocupasse.
-* `code_verifier` e `state` vêm de `/dev/urandom`, não de `Math.random()`.
+Por que não embutir um client id/secret:
 
-**Escopos pedidos** (menor privilégio possível para as funções existentes):
+* os escopos de Calendar são **sensíveis** para o Google — enquanto o projeto
+  não passa pela verificação (política de privacidade, domínio verificado,
+  vídeo de demonstração, análise), fica limitado a **100 usuários** e mostra a
+  tela de "app não verificado";
+* a cota da API seria compartilhada por todos os usuários da extensão: abuso de
+  um afeta todos;
+* num projeto open-source as credenciais ficam públicas de qualquer forma. Num
+  cliente "Desktop app" o secret não é confidencial (RFC 8252 §8.5), mas ainda
+  identifica o *seu* projeto.
 
-| Escopo | Para quê |
-|---|---|
-| `.../auth/calendar.events` | criar, editar e excluir eventos |
-| `.../auth/calendar.readonly` | listar as agendas do usuário |
+Com o GOA nada disso se aplica: o cliente OAuth é o do próprio GNOME, já
+verificado, e o usuário concede o acesso uma vez para o sistema inteiro.
 
-Deliberadamente **não** pedimos `.../auth/calendar`, que também permitiria criar
-e apagar agendas inteiras e alterar ACLs.
+```js
+const [token] = await oauth2.call_get_access_token(null);   // renovado pelo GOA
+```
 
-**Onde cada coisa é guardada:**
+O escopo concedido pelo GOA quando o Calendário está habilitado é
+`https://www.googleapis.com/auth/calendar` — leitura **e** escrita, então todo
+o CRUD funciona.
 
-| Dado | Local | Motivo |
-|---|---|---|
-| Client ID | GSettings (dconf) | não é segredo |
-| Client Secret | **GNOME Keyring** | dconf é texto claro |
-| Refresh token | **GNOME Keyring** | idem |
-| Access token | **só em memória** | dura ~1h; renovado a partir do refresh token |
+**Multi-conta.** Cada agenda pertence a uma conta, e é ela quem fornece o
+token: `CalendarService` guarda `accountId` em cada agenda e resolve a conta
+certa antes de cada chamada. Pedir a agenda de uma conta com o token de outra
+daria 404 silencioso — há teste cobrindo exatamente isso.
 
-Renovação: `getAccessToken()` renova sozinho perto do vencimento, e chamadas
-concorrentes compartilham uma única renovação. Um `401` dispara uma renovação
-forçada e uma única nova tentativa. `invalid_grant` (consentimento revogado)
-limpa o keyring e devolve a UI para a tela de login.
+**O que a extensão faz quando não há conta:** mostra um botão que abre
+Configurações → Contas Online (`gnome-online-accounts-panel.desktop`).
+Distingue dois casos, porque a ação no painel é diferente: não há conta Google,
+ou há conta mas com o Calendário desligado.
 
----
+**401.** Pede ao GOA para revalidar (`call_ensure_credentials`) e tenta de
+novo, uma vez. Persistindo, a conta precisa de atenção no painel do sistema.
 
 ## Dados guardados localmente
 
 | Onde | O quê | Some ao desconectar? |
 |---|---|---|
-| GNOME Keyring | refresh token | **sim** |
-| GNOME Keyring | client secret | não — é credencial do *aplicativo*, não da conta |
-| dconf | client id | não — idem |
-| dconf | `enabled-calendars`, `last-sync` | **sim** (IDs de agenda incluem endereços de e-mail) |
+| GNOME Online Accounts | conta e tokens | é do sistema — remova em Configurações |
+| dconf | `enabled-calendars`, `last-sync` | **sim** (IDs de agenda incluem e-mails) |
 | `~/.cache/<uuid>/events.json` | agendas + eventos (título, descrição, local) | **sim** |
+
+A extensão **não guarda segredo nenhum**: sem client secret, sem refresh token,
+sem entrada própria no chaveiro. Quem cuida disso é o GOA.
 
 O cache existe para o widget não ficar vazio offline, mas guarda conteúdo
 pessoal, então:
@@ -139,19 +142,13 @@ GCAL_FORGET_ALL=1 ./install.sh --forget    # inclui client id e client secret
 sem depender do `secret-tool`, que vem no pacote `libsecret-tools` e costuma
 não estar instalado.
 
-## Como configurar as credenciais
+## Como conectar a conta
 
-1. <https://console.cloud.google.com> → crie um projeto.
-2. **APIs e serviços → Biblioteca** → ative a **Google Calendar API**.
-3. **Tela de permissão OAuth** → tipo *Externo* → adicione seu e-mail em
-   *Usuários de teste* (sem isso o Google recusa contas não verificadas).
-4. **Credenciais → Criar credenciais → ID do cliente OAuth** → tipo
-   **Aplicativo para computador**.
-5. Copie Client ID e Client Secret para `gnome-extensions prefs gcalendar@pvss.dev.br`.
+1. **Configurações → Contas Online → Google** e entre com sua conta.
+2. Deixe **Calendário** ligado para essa conta.
+3. Pronto — o widget detecta pelo sinal do GOA e sincroniza sozinho.
 
-Não há credenciais no repositório, e não deve haver: cada instalação usa as suas.
-
----
+Não há client id, client secret nem tela de login na extensão.
 
 ## Camada do widget (`widget-layer`)
 
@@ -274,8 +271,8 @@ release final é engolido e o botão pressionado recebe `fake_release()`.
 `enable()` monta o grafo e chama `_initAsync()`; `disable()` cancela e destrói na
 ordem inversa.
 
-* Um único `Gio.Cancellable` percorre HTTP, keyring, servidor de loopback e
-  esperas de retentativa. `disable()` o cancela: nada assíncrono sobrevive.
+* Um único `Gio.Cancellable` percorre HTTP, GOA e esperas de retentativa.
+  `disable()` o cancela: nada assíncrono sobrevive.
 * Um contador de geração descarta a inicialização assíncrona se o `disable()`
   acontecer no meio dela.
 * Todo GLib source passa por `TimerPool`, destruído junto.
@@ -292,8 +289,9 @@ ordem inversa.
 Roda em `gjs` puro, sem GNOME Shell e sem npm:
 
 * **90 testes unitários** — fusos e eventos de dia inteiro, eventos de vários
-  dias, PKCE (com o vetor da RFC 7636), classificação de erros, e o `EventStore`
-  inteiro contra dublês (sync, falha parcial, offline, escrita, ciclo de vida).
+  dias, classificação de erros, resolução de conta por agenda no multi-conta, e
+  o `EventStore` inteiro contra dublês (sync, falha parcial, offline, escrita,
+  ciclo de vida).
 * **Smoke test das preferências** — monta as quatro páginas com GTK4/libadwaita
   de verdade, sem abrir janela.
 
@@ -313,7 +311,8 @@ Detalhes extras: inicie a sessão com `GCAL_DEBUG=1` no ambiente.
 
 | Sintoma | Causa provável |
 |---|---|
-| "Não foi possível gravar o token no GNOME Keyring" | chaveiro *Login* bloqueado — abra o **Senhas e Chaves** |
-| Login volta para a tela inicial | falta o e-mail em *Usuários de teste* na tela de consentimento |
-| "Client ID ou Client Secret inválidos" | credenciais de tipo errado (use *Aplicativo para computador*) |
-| Widget não aparece | veja se o Shell é 46/47 e se a extensão está habilitada |
+| "Conecte sua conta do Google" | nenhuma conta Google em Configurações → Contas Online |
+| "Calendário desligado" | a conta existe, mas com o Calendário desativado nas Contas Online |
+| "O Google recusou o acesso desta conta" | credencial expirada — reconecte a conta no painel do sistema |
+| "Contas Online do GNOME indisponível" | serviço `org.gnome.OnlineAccounts` não respondeu |
+| Widget não aparece | Shell fora do 46/47, ou extensão desabilitada |

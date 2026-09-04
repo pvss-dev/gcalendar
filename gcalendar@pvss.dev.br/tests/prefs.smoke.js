@@ -12,7 +12,6 @@ import Gtk from 'gi://Gtk?version=4.0';
 import Adw from 'gi://Adw?version=1';
 
 import {makeSettings} from './fakes.js';
-import {SecretStore} from '../lib/secretStore.js';
 
 if (!GLib.getenv('WAYLAND_DISPLAY') && !GLib.getenv('DISPLAY')) {
     print('sem sessão gráfica — smoke test de prefs pulado');
@@ -46,10 +45,9 @@ const prefs = Object.create(ZorinGCalendarPrefs.prototype);
 prefs.metadata = {uuid: 'gcalendar@pvss.dev.br'};   // `uuid` é getter em ExtensionBase
 
 const settings = makeSettings(GLib.build_filenamev([root, 'schemas']));
-const secrets = new SecretStore();
 
 const pages = [
-    ['Conta', () => prefs._accountPage(settings, secrets)],
+    ['Conta', () => prefs._accountPage()],
     ['Agendas', () => prefs._calendarsPage(settings)],
     ['Aparência', () => prefs._appearancePage(settings)],
     ['Sincronização', () => prefs._behaviourPage(settings)],

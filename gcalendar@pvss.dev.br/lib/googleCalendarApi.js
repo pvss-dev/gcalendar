@@ -16,16 +16,15 @@ const MAX_RETRIES = 3;
 const PAGE_SIZE = 250;
 
 export class GoogleCalendarApi {
-    constructor({auth, http, cancellable}) {
-        this._auth = auth;
+    constructor({http, cancellable}) {
         this._http = http;
         this._cancellable = cancellable;
     }
 
     /* ══════════════════════ Agendas ══════════════════════ */
 
-    async listCalendars() {
-        const items = await this._getPaginated('/users/me/calendarList', {
+    async listCalendars(account) {
+        const items = await this._getPaginated(account, '/users/me/calendarList', {
             fields: 'nextPageToken,items(id,summary,summaryOverride,backgroundColor,' +
                     'foregroundColor,selected,primary,accessRole,timeZone,deleted)',
             minAccessRole: 'reader',
@@ -41,8 +40,8 @@ export class GoogleCalendarApi {
      * `singleEvents=true` faz o Google expandir as recorrências, então cada
      * ocorrência chega como um evento próprio já com data resolvida.
      */
-    async listEvents(calendarId, {timeMin, timeMax}) {
-        return this._getPaginated(`/calendars/${enc(calendarId)}/events`, {
+    async listEvents(account, calendarId, {timeMin, timeMax}) {
+        return this._getPaginated(account, `/calendars/${enc(calendarId)}/events`, {
             timeMin,
             timeMax,
             singleEvents: 'true',
@@ -53,32 +52,34 @@ export class GoogleCalendarApi {
         });
     }
 
-    async getEvent(calendarId, eventId) {
-        return this._request('GET', `/calendars/${enc(calendarId)}/events/${enc(eventId)}`);
+    async getEvent(account, calendarId, eventId) {
+        return this._request(account, 'GET',
+            `/calendars/${enc(calendarId)}/events/${enc(eventId)}`);
     }
 
-    async insertEvent(calendarId, body) {
-        return this._request('POST', `/calendars/${enc(calendarId)}/events`, {body});
+    async insertEvent(account, calendarId, body) {
+        return this._request(account, 'POST',
+            `/calendars/${enc(calendarId)}/events`, {body});
     }
 
-    async patchEvent(calendarId, eventId, body) {
-        return this._request('PATCH',
+    async patchEvent(account, calendarId, eventId, body) {
+        return this._request(account, 'PATCH',
             `/calendars/${enc(calendarId)}/events/${enc(eventId)}`, {body});
     }
 
-    async deleteEvent(calendarId, eventId) {
-        return this._request('DELETE',
+    async deleteEvent(account, calendarId, eventId) {
+        return this._request(account, 'DELETE',
             `/calendars/${enc(calendarId)}/events/${enc(eventId)}`);
     }
 
     /* ══════════════════════ Interno ══════════════════════ */
 
-    async _getPaginated(path, params) {
+    async _getPaginated(account, path, params) {
         const items = [];
         let pageToken;
 
         for (let page = 0; page < MAX_PAGES; page++) {
-            const data = await this._request('GET', path, {
+            const data = await this._request(account, 'GET', path, {
                 params: {...params, maxResults: String(PAGE_SIZE), pageToken},
             });
             if (data?.items?.length)
@@ -93,13 +94,14 @@ export class GoogleCalendarApi {
         return items;
     }
 
-    async _request(method, path, {params = null, body = null} = {}) {
+    async _request(account, method, path, {params = null, body = null} = {}) {
         const qs = params ? buildQueryString(params) : '';
         const url = `${BASE}${path}${qs ? `?${qs}` : ''}`;
         let retriedAuth = false;
 
         for (let attempt = 0; ; attempt++) {
-            const token = await this._auth.getAccessToken();
+            // O token vem do GNOME Online Accounts e já chega renovado.
+            const token = await account.getAccessToken();
 
             try {
                 return await this._http.requestJson(method, url, {
@@ -111,16 +113,18 @@ export class GoogleCalendarApi {
                 if (isCancelled(err))
                     throw err;
 
-                // 401: o access token pode ter sido invalidado do outro lado.
-                // Uma renovação forçada resolve; duas seguidas significam que
-                // a autorização caiu de vez.
+                // 401: o token pode ter sido invalidado do outro lado. Pedir
+                // ao GOA para revalidar resolve; duas seguidas significam que
+                // a conta precisa de atenção nas Contas Online.
                 if (err instanceof ApiError && err.status === 401 && !retriedAuth) {
                     retriedAuth = true;
-                    this._auth.invalidateAccessToken();
+                    await account.ensureCredentials();
                     continue;
                 }
-                if (err instanceof ApiError && err.status === 401)
-                    throw new AuthError('Autorização recusada pelo Google. Entre novamente.');
+                if (err instanceof ApiError && err.status === 401) {
+                    throw new AuthError('O Google recusou o acesso desta conta. ' +
+                        'Reconecte-a em Configurações → Contas Online.');
+                }
 
                 if (err.retryable && attempt < MAX_RETRIES) {
                     const delay = 500 * 2 ** attempt;

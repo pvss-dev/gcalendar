@@ -10,6 +10,7 @@ import './errors.test.js';
 import './calendarService.test.js';
 import './eventStore.test.js';
 import './monthLayout.test.js';
+import './notificationRules.test.js';
 
 import {run} from './harness.js';
 

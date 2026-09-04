@@ -26,8 +26,14 @@ export function isDebugEnabled() {
 }
 
 export function debug(...args) {
-    if (debugEnabled && !QUIET)
-        console.debug(PREFIX, ...args);
+    if (!debugEnabled || QUIET)
+        return;
+
+    // console.log, não console.debug: o GLib descarta G_LOG_LEVEL_DEBUG a
+    // menos que o domínio esteja em G_MESSAGES_DEBUG, então a mensagem nunca
+    // chegaria ao journal. Quem filtra aqui é a chave `debug-logging` — que
+    // vem desligada, mantendo a extensão silenciosa em uso normal.
+    console.log(PREFIX, ...args);
 }
 
 export function info(...args) {

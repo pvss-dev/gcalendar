@@ -18,7 +18,11 @@ class EventList extends St.BoxLayout {
      * @param {(event: object) => void} onActivate  chamado ao clicar num evento
      */
     _init(onActivate) {
-        super._init({vertical: true, style_class: 'gcal-events'});
+        super._init({
+            vertical: true,
+            style_class: 'gcal-events',
+            x_expand: true,
+        });
         this._onActivate = onActivate;
     }
 
@@ -45,6 +49,7 @@ class EventList extends St.BoxLayout {
         const box = new St.BoxLayout({
             vertical: true,
             style_class: `gcal-notice gcal-notice-${tone}`,
+            x_expand: true,
         });
 
         const label = new St.Label({text, style_class: 'gcal-notice-text'});
@@ -72,7 +77,12 @@ class EventList extends St.BoxLayout {
             x_expand: true,
         });
 
-        const content = new St.BoxLayout({style_class: 'gcal-event-content'});
+        // x_expand: sem ele o conteúdo pega a largura natural e fica
+        // centralizado dentro do botão, desalinhado do resto do widget.
+        const content = new St.BoxLayout({
+            style_class: 'gcal-event-content',
+            x_expand: true,
+        });
 
         content.add_child(new St.Widget({
             style_class: 'gcal-event-strip',

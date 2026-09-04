@@ -17,8 +17,8 @@ import * as Log from './lib/log.js';
 import {BUILD} from './lib/build.js';
 import {isCancelled} from './lib/errors.js';
 import {HttpClient} from './lib/http.js';
-import {SecretStore, migrateFromSettings} from './lib/secretStore.js';
-import {GoogleAuth} from './lib/googleAuth.js';
+import {clearLegacySecrets} from './lib/secretStore.js';
+import {GoaAuth} from './lib/goaAuth.js';
 import {GoogleCalendarApi} from './lib/googleCalendarApi.js';
 import {CalendarService} from './lib/calendarService.js';
 import {EventStore} from './lib/eventStore.js';
@@ -39,21 +39,15 @@ export default class ZorinGCalendarExtension extends Extension {
 
         try {
             this._http = new HttpClient({timeout: 20, cancellable: this._cancellable});
-            this._secrets = new SecretStore(this._cancellable);
 
-            this._auth = new GoogleAuth({
-                settings: this._settings,
-                secrets: this._secrets,
-                http: this._http,
-                cancellable: this._cancellable,
-            });
+            // Sem credenciais próprias: o token vem do GNOME Online Accounts.
+            this._auth = new GoaAuth({cancellable: this._cancellable});
 
             const api = new GoogleCalendarApi({
-                auth: this._auth,
                 http: this._http,
                 cancellable: this._cancellable,
             });
-            const service = new CalendarService(api);
+            const service = new CalendarService({api, auth: this._auth});
 
             this._store = new EventStore({
                 service,
@@ -77,16 +71,8 @@ export default class ZorinGCalendarExtension extends Extension {
 
             // Mudar o Client ID nas preferências deve refletir no widget na hora.
             this._settingsSignals = [
-                this._settings.connect('changed::client-id',
-                    () => this._auth?.emit('state-changed')),
                 this._settings.connect('changed::debug-logging', () =>
                     Log.setDebugEnabled(this._settings.get_boolean('debug-logging'))),
-                // As preferências rodam em outro processo: é por esta chave
-                // que elas pedem a desconexão completa da conta.
-                this._settings.connect('changed::sign-out-requested', () => {
-                    if (this._settings.get_int64('sign-out-requested') > 0)
-                        this._signOut();
-                }),
             ];
 
             this._initAsync(generation);
@@ -117,30 +103,18 @@ export default class ZorinGCalendarExtension extends Extension {
         this._store = null;
         this._auth = null;
         this._http = null;
-        this._secrets = null;
         this._settings = null;
         this._cancellable = null;
 
         Log.debug('extensão desabilitada');
     }
 
-    async _signOut() {
-        try {
-            await this._auth?.signOut();
-            // signOut() já dispara o 'state-changed' que limpa memória e
-            // cache; isto remove também o que resta em GSettings.
-            this._store?.forgetLocalData();
-            this._settings?.set_int64('sign-out-requested', 0);
-        } catch (err) {
-            if (!isCancelled(err))
-                Log.error(err, 'desconectar');
-        }
-    }
-
-    /** Carrega segredos e sobe os serviços; roda depois do enable() retornar. */
+    /** Conecta ao GOA e sobe os serviços; roda depois do enable() retornar. */
     async _initAsync(generation) {
         try {
-            await migrateFromSettings(this._settings, this._secrets);
+            // Versões anteriores guardavam client secret e refresh token no
+            // keyring. Com o GOA nada disso é usado; limpa o resíduo.
+            await clearLegacySecrets(this._settings);
             if (this._generation !== generation)
                 return;
 
