@@ -2,6 +2,7 @@
   "name": "GCalendar Widget",
   "description": "Widget de calendário na área de trabalho integrado ao Google Agenda: navegação por mês, eventos do dia, criação, edição e exclusão de eventos, sincronização automática e notificações.\n\nUsa a conta que você já tem em Configurações → Contas Online do GNOME. A extensão não pede credenciais, não faz login próprio e não guarda senhas nem tokens: o acesso é o mesmo que o restante do sistema já usa. Contas Google com o Calendário habilitado aparecem automaticamente, e várias contas são exibidas juntas.",
   "uuid": "gcalendar@pvss.dev.br",
+  "url": "https://github.com/pvss-dev/gcalendar",
   "shell-version": [
     "46",
     "47"

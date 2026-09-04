@@ -1,0 +1,5 @@
+# Bundle gerado por ./install.sh --zip
+*.shell-extension.zip
+
+# Carimbo de build, escrito só na cópia instalada
+BUILD
