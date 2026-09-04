@@ -7,7 +7,7 @@
 #     ./install.sh --test     só roda a suíte de verificação
 #     ./install.sh --zip      empacota para extensions.gnome.org
 #     ./install.sh --remove   desinstala
-#     ./install.sh --layer desktop|auto|top   troca a camada (efeito imediato)
+#     ./install.sh --layer desktop|top   troca a camada (efeito imediato)
 #     ./install.sh --status   diz se o Shell já carregou a versão instalada
 #     ./install.sh --diagnose relatório para depurar cliques que não chegam
 #     ./install.sh --debug on|off   liga o diagnóstico no journal
@@ -148,6 +148,17 @@ GJS
     dconf reset -f "$LEGACY_PATH"
 }
 
+# O modo 'auto' foi removido: sem isto, quem já o tinha gravado ficaria com um
+# valor fora das opções do schema.
+migrate_removed_layer() {
+    local current
+    current="$(dconf read /org/gnome/shell/extensions/gcalendar/widget-layer 2>/dev/null || true)"
+    if [[ "$current" == "'auto'" ]]; then
+        dconf write /org/gnome/shell/extensions/gcalendar/widget-layer "'desktop'"
+        ok "Camada 'auto' (removida) migrada para 'Atrás das janelas'"
+    fi
+}
+
 # Some com instalações de UUIDs anteriores. Roda sempre: o schema (e portanto
 # dconf e keyring) não depende do UUID, então aqui só há diretórios a limpar.
 remove_legacy_installs() {
@@ -164,6 +175,7 @@ do_install() {
     check_deps
     check_shell_version
     migrate_legacy
+    migrate_removed_layer
     remove_legacy_installs
     run_tests
     compile_schemas
@@ -241,15 +253,14 @@ do_remove() {
 do_layer() {
     local value="${1:-}"
     case "$value" in
-        desktop|auto|top) ;;
-        *) err "Use: ./install.sh --layer desktop|auto|top" ;;
+        desktop|top) ;;
+        *) err "Use: ./install.sh --layer desktop|top" ;;
     esac
     [[ -d "$EXT_DIR/schemas" ]] || err "Extensão não instalada — rode ./install.sh antes"
     gsettings --schemadir "$EXT_DIR/schemas" \
         set org.gnome.shell.extensions.gcalendar widget-layer "$value"
     case "$value" in
-        desktop) ok "Atrás das janelas (dentro do grupo de janelas)" ;;
-        auto)    ok "Some sob as janelas — modo que sempre recebe cliques" ;;
+        desktop) ok "Atrás das janelas (na área de trabalho)" ;;
         top)     ok "Sempre visível, acima das janelas" ;;
     esac
 }

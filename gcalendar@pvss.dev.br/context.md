@@ -155,8 +155,13 @@ Não há client id, client secret nem tela de login na extensão.
 | Valor | Como funciona |
 |---|---|
 | `desktop` (padrão) | dentro de `global.window_group`, acima do papel de parede **e das janelas de tipo DESKTOP**, atrás das janelas comuns |
-| `auto` | fica na camada de chrome (clique sempre chega) e simplesmente **some enquanto uma janela o sobrepõe** |
 | `top` | em `uiGroup`, acima de `global.window_group` — sempre visível |
+
+Houve um terceiro modo, `auto`, que ficava na camada de chrome e se ocultava
+quando uma janela o sobrepunha. Foi removido: na prática era
+indistinguível de `desktop` fora do caso de sobreposição parcial, e existia
+como rede de segurança de quando ainda não se sabia se `desktop` receberia
+cliques no X11. O `install.sh` migra quem tinha esse valor gravado.
 
 **Duas armadilhas de empilhamento**, ambas já custaram sessões de depuração:
 

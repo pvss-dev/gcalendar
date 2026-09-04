@@ -141,7 +141,6 @@ class DesktopWidget extends St.Widget {
         this._layerItems = new Map();
         for (const [layer, label] of [
             ['desktop', 'Atrás das janelas'],
-            ['auto', 'Some sob as janelas'],
             ['top', 'Sempre visível'],
         ]) {
             const item = this._addMenuAction(label,
@@ -511,10 +510,11 @@ class DesktopWidget extends St.Widget {
      * na área de trabalho: o esconde atrás do papel de parede.
      */
     _applyLayer() {
-        const layer = this._settings.get_string('widget-layer');
-        const parent = layer === 'desktop'
-            ? global.window_group
-            : Main.layoutManager.uiGroup;
+        // Valor desconhecido (por exemplo o modo 'auto', removido) cai na
+        // área de trabalho, que é o padrão.
+        const parent = this._settings.get_string('widget-layer') === 'top'
+            ? Main.layoutManager.uiGroup
+            : global.window_group;
 
         if (this._parentGroup !== parent) {
             this._parentGroup?.remove_child(this);
@@ -583,19 +583,8 @@ class DesktopWidget extends St.Widget {
             return;
         }
 
-        const blocker = this._findCoveringWindow();
-
-        if (layer === 'auto') {
-            // Ocultação visual, não de região de entrada: funciona igual nos
-            // dois servidores gráficos. O widget fica na camada de chrome,
-            // onde o clique sempre chega, e só some enquanto uma janela o
-            // sobrepõe.
-            this.visible = !blocker;
-            this._setTracked(true, blocker);
-            return;
-        }
-
         // 'desktop': o widget está de fato atrás das janelas.
+        const blocker = this._findCoveringWindow();
         this.show();
 
         // No Wayland o hit-testing vem da ordem dos atores e
@@ -624,10 +613,7 @@ class DesktopWidget extends St.Widget {
             Main.layoutManager.trackChrome(this, {
                 affectsInputRegion: true,
                 affectsStruts: false,
-                // No modo 'auto' quem controla a visibilidade é o teste de
-                // sobreposição (que já cobre janela em tela cheia); deixar o
-                // LayoutManager também mexer em `visible` faria os dois brigarem.
-                trackFullscreen: this._settings.get_string('widget-layer') !== 'auto',
+                trackFullscreen: true,
             });
         } else {
             Main.layoutManager.untrackChrome(this);

@@ -16,7 +16,7 @@ import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/ex
 import Goa from 'gi://Goa';
 
 // Mesma ordem das opções mostradas na combo de camada.
-const LAYERS = ['desktop', 'auto', 'top'];
+const LAYERS = ['desktop', 'top'];
 
 export default class ZorinGCalendarPrefs extends ExtensionPreferences {
 
@@ -197,12 +197,10 @@ export default class ZorinGCalendarPrefs extends ExtensionPreferences {
             // linha e corta o texto com reticências. A explicação cabe no
             // subtítulo, que quebra em várias linhas. São também os mesmos
             // rótulos do menu de botão direito do widget.
-            subtitle: 'Onde o widget fica em relação às janelas. ' +
-                      '"Some sob as janelas" é o modo que sempre recebe cliques; ' +
-                      '"Atrás das janelas" pode não receber quando algo o cobre.',
+            subtitle: 'Atrás das janelas, o widget fica na área de trabalho e ' +
+                      'não recebe cliques enquanto alguma janela o cobrir.',
             model: Gtk.StringList.new([
                 'Atrás das janelas',
-                'Some sob as janelas',
                 'Sempre visível',
             ]),
             selected: Math.max(0, LAYERS.indexOf(settings.get_string('widget-layer'))),

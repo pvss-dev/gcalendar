@@ -61,16 +61,12 @@
       <choices>
         <choice value="top"/>
         <choice value="desktop"/>
-        <choice value="auto"/>
       </choices>
       <default>'desktop'</default>
       <summary>Camada do widget</summary>
       <description>
         "desktop" coloca o widget dentro do grupo de janelas, acima do papel de
         parede e dos ícones da área de trabalho, atrás das janelas comuns.
-        "auto" mantém o widget na camada de chrome (onde o clique é garantido)
-        e simplesmente o oculta enquanto alguma janela o sobrepõe — parece um
-        widget de área de trabalho e nunca perde a interação.
         "top" mantém o widget sempre visível, acima das janelas.
       </description>
     </key>
