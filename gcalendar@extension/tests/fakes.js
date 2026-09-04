@@ -11,7 +11,7 @@ import {normalizeEvent, normalizeCalendar} from '../lib/calendarService.js';
 export function makeSettings(schemasDir) {
     const source = Gio.SettingsSchemaSource.new_from_directory(
         schemasDir, Gio.SettingsSchemaSource.get_default(), false);
-    const schema = source.lookup('org.gnome.shell.extensions.zorin-gcalendar', true);
+    const schema = source.lookup('org.gnome.shell.extensions.gcalendar', true);
     if (!schema)
         throw new Error(`schema não encontrado em ${schemasDir} — rode glib-compile-schemas`);
 

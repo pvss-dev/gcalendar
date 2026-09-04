@@ -43,7 +43,7 @@ const {default: ZorinGCalendarPrefs} = await import(`file://${root}/prefs.js`);
 // A janela real de preferências instancia isto via ExtensionBase; aqui só
 // precisamos dos construtores de página, então montamos o objeto direto.
 const prefs = Object.create(ZorinGCalendarPrefs.prototype);
-prefs.metadata = {uuid: 'zorin-gcalendar@extension'};   // `uuid` é getter em ExtensionBase
+prefs.metadata = {uuid: 'gcalendar@extension'};   // `uuid` é getter em ExtensionBase
 
 const settings = makeSettings(GLib.build_filenamev([root, 'schemas']));
 const secrets = new SecretStore();

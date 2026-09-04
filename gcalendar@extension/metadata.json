@@ -1,11 +1,13 @@
 {
-  "name": "Zorin GCalendar Widget",
-  "description": "Widget de calendário na área de trabalho integrado ao Google Agenda: navegação por mês, eventos do dia, criação/edição/exclusão de eventos, sincronização automática e notificações. Tokens guardados no GNOME Keyring.",
-  "uuid": "zorin-gcalendar@extension",
-  "shell-version": ["46", "47"],
+  "name": "GCalendar Widget",
+  "description": "Widget de calendário na área de trabalho integrado ao Google Agenda: navegação por mês, eventos do dia, criação, edição e exclusão de eventos, sincronização automática e notificações.\n\nRequer credenciais OAuth próprias: crie um projeto no Google Cloud Console, ative a Google Calendar API e gere um ID de cliente do tipo \"Aplicativo para computador\". O Client Secret e o token de atualização ficam no GNOME Keyring; nada sensível é gravado em texto claro.",
+  "uuid": "gcalendar@extension",
+  "shell-version": [
+    "46",
+    "47"
+  ],
   "version": 2,
   "version-name": "2.0",
-  "url": "https://github.com/yourusername/zorin-gcalendar",
-  "settings-schema": "org.gnome.shell.extensions.zorin-gcalendar",
-  "gettext-domain": "zorin-gcalendar"
+  "settings-schema": "org.gnome.shell.extensions.gcalendar",
+  "gettext-domain": "gcalendar"
 }

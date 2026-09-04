@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
-  <schema id="org.gnome.shell.extensions.zorin-gcalendar"
-          path="/org/gnome/shell/extensions/zorin-gcalendar/">
+  <schema id="org.gnome.shell.extensions.gcalendar"
+          path="/org/gnome/shell/extensions/gcalendar/">
 
     <!-- ══ Credenciais ═════════════════════════════════════════════════
          O Client ID de um cliente "Desktop app" não é secreto (RFC 8252).
@@ -111,6 +111,15 @@
         As preferências rodam em outro processo e não alcançam o objeto de
         autenticação da extensão. Gravar aqui o horário do pedido faz a
         extensão revogar o token no Google e limpar o keyring.
+      </description>
+    </key>
+
+    <key name="debug-logging" type="b">
+      <default>false</default>
+      <summary>Registrar diagnóstico no journal</summary>
+      <description>
+        Desligado por padrão: em uso normal a extensão só registra erros.
+        Ligue para investigar layout, região de entrada e sincronização.
       </description>
     </key>
 

@@ -18,7 +18,7 @@ import {NetworkError, ApiError, CancelledError, isCancelled} from './errors.js';
 
 Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
 
-const USER_AGENT = 'zorin-gcalendar/2 (GNOME Shell extension)';
+const USER_AGENT = 'gcalendar/2 (GNOME Shell extension)';
 
 export class HttpClient {
     /**

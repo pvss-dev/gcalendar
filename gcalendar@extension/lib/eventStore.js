@@ -426,7 +426,7 @@ export const EventStore = GObject.registerClass({
         this._clearEvents();
         this._settings.reset('enabled-calendars');
         this._settings.reset('last-sync');
-        Log.info('dados locais da conta removidos');
+        Log.debug('dados locais da conta removidos');
     }
 
     _addLoadedRange(from, to) {

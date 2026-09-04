@@ -292,7 +292,7 @@ class DesktopWidget extends St.Widget {
             const height = Math.round(this.height);
             if (height !== this._loggedHeight) {
                 this._loggedHeight = height;
-                Log.info(`altura do widget: ${height}px`);
+                Log.debug(`altura do widget: ${height}px`);
             }
         });
 
@@ -574,19 +574,25 @@ class DesktopWidget extends St.Widget {
         const blocker = this._findCoveringWindow();
 
         if (layer === 'auto') {
-            // Fica na camada de chrome, onde o clique sempre chega, e apenas
-            // some enquanto uma janela o sobrepõe. Visualmente é um widget de
-            // área de trabalho; do ponto de vista de input, nunca é ambíguo.
+            // Ocultação visual, não de região de entrada: funciona igual nos
+            // dois servidores gráficos. O widget fica na camada de chrome,
+            // onde o clique sempre chega, e só some enquanto uma janela o
+            // sobrepõe.
             this.visible = !blocker;
             this._setTracked(true, blocker);
             return;
         }
 
-        // 'desktop': está de fato atrás das janelas, então precisa soltar a
-        // região de entrada quando coberto — senão roubaria no X11 o clique
-        // destinado à janela de cima.
+        // 'desktop': o widget está de fato atrás das janelas.
         this.show();
-        this._setTracked(!blocker, blocker);
+
+        // No Wayland o hit-testing vem da ordem dos atores e
+        // `_updateRegions()` nem monta a região de entrada
+        // (`!Meta.is_wayland_compositor()`): soltar o rastreamento não
+        // devolveria clique algum à janela de cima, só desligaria o
+        // tratamento de tela cheia. Já no X11 a região é global, e mantê-la
+        // sob uma janela roubaria o clique dela.
+        this._setTracked(Meta.is_wayland_compositor() || !blocker, blocker);
     }
 
     _setTracked(shouldTrack, blocker = null) {
@@ -598,7 +604,7 @@ class DesktopWidget extends St.Widget {
         // pelo journal, por que um clique não chegou ao widget.
         const [x, y] = this.get_position();
         const [w, h] = this.get_size();
-        Log.info(`região de entrada ${shouldTrack ? 'ativada' : 'liberada'} — ` +
+        Log.debug(`região de entrada ${shouldTrack ? 'ativada' : 'liberada'} — ` +
             `camada ${this._settings.get_string('widget-layer')}, ` +
             `widget ${Math.round(x)},${Math.round(y)} ${Math.round(w)}x${Math.round(h)}` +
             (blocker ? `, coberto por "${blocker}"` : ''));

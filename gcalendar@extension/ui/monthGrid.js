@@ -26,6 +26,7 @@ const HEADER_HEIGHT = 22;
 const CELL_HEIGHT = 38;
 const ROW_SPACING = 2;
 const COLUMN_SPACING = 1;
+const MAX_DOTS = 3;
 
 export const MonthGrid = GObject.registerClass({
     Signals: {
@@ -89,9 +90,6 @@ export const MonthGrid = GObject.registerClass({
             const column = index % GRID_COLS;
             const row = Math.floor(index / GRID_COLS);
 
-            // A célula tem só o rótulo. Nada de ator condicional: é o que
-            // torna a grade logada estruturalmente idêntica à deslogada. O
-            // marcador de "há eventos" é cor de borda (ver _updateEventMarker).
             const label = new St.Label({
                 style_class: 'gcal-grid-day-number',
                 x_expand: true,
@@ -100,6 +98,28 @@ export const MonthGrid = GObject.registerClass({
                 y_align: Clutter.ActorAlign.CENTER,
             });
 
+            // A faixa de marcadores está SEMPRE presente, com altura fixa no
+            // CSS: vazia nos dias sem evento. Assim o número fica na mesma
+            // posição em toda célula.
+            const dots = new St.BoxLayout({
+                style_class: 'gcal-grid-dots',
+                x_align: Clutter.ActorAlign.CENTER,
+            });
+
+            // Empilhar os pontos abaixo do número voltou a ser seguro: a
+            // altura da célula é fixada em _applyFixedHeight() e a largura da
+            // coluna vem do GridLayout homogêneo sobre a largura do widget.
+            // Nenhum dos dois depende mais do conteúdo.
+            const content = new St.BoxLayout({
+                vertical: true,
+                x_expand: true,
+                y_expand: true,
+                x_align: Clutter.ActorAlign.FILL,
+                y_align: Clutter.ActorAlign.FILL,
+            });
+            content.add_child(label);
+            content.add_child(dots);
+
             // St.Button com `label` E `set_child()` perde o número do dia:
             // definir o child substitui o rótulo interno. Só usamos child.
             const cell = new St.Button({
@@ -107,7 +127,7 @@ export const MonthGrid = GObject.registerClass({
                 can_focus: true,
                 x_expand: true,
                 y_expand: true,
-                child: label,
+                child: content,
             });
             cell.connect('clicked', () => {
                 const date = this._cellDates[index];
@@ -116,6 +136,7 @@ export const MonthGrid = GObject.registerClass({
             });
 
             cell._label = label;
+            cell._dots = dots;
             this._cells.push(cell);
             layout.attach(cell, column, row + 1, 1, 1);
         }
@@ -166,23 +187,25 @@ export const MonthGrid = GObject.registerClass({
                 classes.push('gcal-grid-day-selected');
             cell.set_style_class_name(classes.join(' '));
 
-            this._updateEventMarker(cell, coloursByDay.get(dayKey(date)) ?? []);
+            this._updateDots(cell, coloursByDay.get(dayKey(date)) ?? []);
         }
     }
 
     /**
-     * Marca "dia com eventos" pela COR da borda inferior, não por um ator.
+     * Bolinhas coloridas sob o número, uma por evento (até MAX_DOTS).
      *
-     * Toda célula já tem `border: 1px solid transparent` com a base mais
-     * grossa, em qualquer estado. Colorir não muda geometria nenhuma — ao
-     * contrário de acrescentar um filho, que altera o tamanho pedido pelo
-     * conteúdo. É o mesmo princípio do calendário do Shell, que usa
-     * `background-image` para esse marcador.
+     * A cor vem da agenda ou do evento, as mesmas da lista abaixo. A faixa
+     * nunca é ocultada — só esvaziada — para que a posição do número não mude
+     * entre dias com e sem evento.
      */
-    _updateEventMarker(cell, colours) {
-        cell.set_style(colours.length
-            ? `border-bottom-color: ${safeColour(colours[0])};`
-            : null);
+    _updateDots(cell, colours) {
+        cell._dots.destroy_all_children();
+        for (const colour of colours.slice(0, MAX_DOTS)) {
+            cell._dots.add_child(new St.Widget({
+                style_class: 'gcal-grid-dot',
+                style: `background-color: ${safeColour(colour)};`,
+            }));
+        }
     }
 
     /**
@@ -214,7 +237,7 @@ export const MonthGrid = GObject.registerClass({
             return;
 
         this._loggedGeometry = summary;
-        Log.info(`área dos dias: ${summary} [${widths.join(', ')}]`);
+        Log.debug(`área dos dias: ${summary} [${widths.join(', ')}]`);
     }
 
     /** Navegação por teclado entre as células (setas, Home/End). */

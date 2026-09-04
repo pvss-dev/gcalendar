@@ -22,7 +22,7 @@ Gio._promisify(Secret, 'password_lookup', 'password_lookup_finish');
 Gio._promisify(Secret, 'password_clear', 'password_clear_finish');
 
 const SCHEMA = new Secret.Schema(
-    'org.gnome.shell.extensions.zorin-gcalendar',
+    'org.gnome.shell.extensions.gcalendar',
     Secret.SchemaFlags.NONE,
     {key: Secret.SchemaAttributeType.STRING}
 );
@@ -111,6 +111,6 @@ export async function migrateFromSettings(settings, store) {
     }
 
     if (migrated)
-        Log.info('Segredos migrados do GSettings para o GNOME Keyring.');
+        Log.debug('Segredos migrados do GSettings para o GNOME Keyring.');
     return migrated;
 }

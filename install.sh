@@ -10,11 +10,12 @@
 #     ./install.sh --layer desktop|auto|top   troca a camada (efeito imediato)
 #     ./install.sh --status   diz se o Shell já carregou a versão instalada
 #     ./install.sh --diagnose relatório para depurar cliques que não chegam
+#     ./install.sh --debug on|off   liga o diagnóstico no journal
 #     ./install.sh --forget   apaga cache, agendas e token da conta (mantém o app)
 # ============================================================
 set -euo pipefail
 
-UUID="zorin-gcalendar@extension"
+UUID="gcalendar@extension"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$UUID"
 EXT_DIR="$HOME/.local/share/gnome-shell/extensions/$UUID"
 
@@ -39,7 +40,12 @@ check_shell_version() {
     local running major supported
     running="$(gnome-shell --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)"
     major="${running%%.*}"
-    supported="$(grep -oE '"shell-version"[^]]*]' "$SRC_DIR/metadata.json" | grep -oE '[0-9]+' | tr '\n' ' ')"
+    # `tr -d` primeiro: o metadata.json é indentado e "shell-version" ocupa
+    # várias linhas, que um grep por linha não alcança. `|| true` porque sem
+    # correspondência o grep sai com 1 e o `set -e` mataria a função.
+    supported="$(tr -d '\n ' < "$SRC_DIR/metadata.json" \
+        | grep -oE '"shell-version":\[[^]]*\]' \
+        | grep -oE '[0-9]+' | tr '\n' ' ' || true)"
 
     if [[ -z "$running" ]]; then
         warn "Não foi possível detectar a versão do GNOME Shell"
@@ -73,9 +79,72 @@ compile_schemas() {
     ok "Schemas GSettings compilados"
 }
 
+LEGACY_UUID="zorin-gcalendar@extension"
+LEGACY_PATH="/org/gnome/shell/extensions/zorin-gcalendar/"
+NEW_PATH="/org/gnome/shell/extensions/gcalendar/"
+
+# A extensão se chamava zorin-gcalendar. Renomear muda o UUID, o caminho do
+# dconf e o schema do keyring — ou seja, preferências e segredos ficariam
+# órfãos. Isto move os dois, uma única vez, e só quando o destino está vazio.
+migrate_legacy() {
+    [[ -z "$(dconf dump "$LEGACY_PATH" 2>/dev/null)" ]] && return 0
+    [[ -n "$(dconf dump "$NEW_PATH" 2>/dev/null)" ]] && return 0
+
+    dconf dump "$LEGACY_PATH" | dconf load "$NEW_PATH"
+    ok "Preferências migradas de $LEGACY_UUID"
+
+    local script
+    script="$(mktemp --suffix=.js)"
+    cat > "$script" <<'GJS'
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import Secret from 'gi://Secret';
+
+Gio._promisify(Secret, 'password_lookup', 'password_lookup_finish');
+Gio._promisify(Secret, 'password_store', 'password_store_finish');
+Gio._promisify(Secret, 'password_clear', 'password_clear_finish');
+
+const attrs = {key: Secret.SchemaAttributeType.STRING};
+const OLD = new Secret.Schema('org.gnome.shell.extensions.zorin-gcalendar',
+    Secret.SchemaFlags.NONE, attrs);
+const NEW = new Secret.Schema('org.gnome.shell.extensions.gcalendar',
+    Secret.SchemaFlags.NONE, attrs);
+
+const loop = GLib.MainLoop.new(null, false);
+(async () => {
+    for (const key of ['refresh-token', 'client-secret']) {
+        try {
+            const value = await Secret.password_lookup(OLD, {key}, null);
+            if (!value)
+                continue;
+            await Secret.password_store(NEW, {key}, Secret.COLLECTION_DEFAULT,
+                `GCalendar — ${key}`, value, null);
+            await Secret.password_clear(OLD, {key}, null);
+            print(`      ${key}: migrado`);
+        } catch (e) {
+            print(`      ${key}: FALHOU — ${e.message}`);
+        }
+    }
+    loop.quit();
+})();
+loop.run();
+GJS
+    echo "  GNOME Keyring:"
+    gjs -m "$script" || warn "Alguma entrada não pôde ser migrada"
+    rm -f "$script"
+
+    # Remove a instalação antiga para não ficarem duas extensões concorrendo.
+    gnome-extensions disable "$LEGACY_UUID" 2>/dev/null || true
+    rm -rf "$HOME/.local/share/gnome-shell/extensions/$LEGACY_UUID"
+    rm -rf "$HOME/.cache/$LEGACY_UUID"
+    dconf reset -f "$LEGACY_PATH"
+    ok "Instalação antiga ($LEGACY_UUID) removida"
+}
+
 do_install() {
     check_deps
     check_shell_version
+    migrate_legacy
     run_tests
     compile_schemas
 
@@ -142,7 +211,7 @@ do_remove() {
     ok "Extensão removida de $EXT_DIR"
     warn "Tokens no GNOME Keyring e preferências no dconf continuam lá."
     warn "Para apagar tudo:"
-    echo  "    dconf reset -f /org/gnome/shell/extensions/zorin-gcalendar/"
+    echo  "    dconf reset -f /org/gnome/shell/extensions/gcalendar/"
     echo  "    secret-tool clear key refresh-token"
     echo  "    secret-tool clear key client-secret"
 }
@@ -157,7 +226,7 @@ do_layer() {
     esac
     [[ -d "$EXT_DIR/schemas" ]] || err "Extensão não instalada — rode ./install.sh antes"
     gsettings --schemadir "$EXT_DIR/schemas" \
-        set org.gnome.shell.extensions.zorin-gcalendar widget-layer "$value"
+        set org.gnome.shell.extensions.gcalendar widget-layer "$value"
     case "$value" in
         desktop) ok "Atrás das janelas (dentro do grupo de janelas)" ;;
         auto)    ok "Some sob as janelas — modo que sempre recebe cliques" ;;
@@ -190,6 +259,17 @@ do_status() {
     fi
 
     if [[ -z "$running" ]]; then
+        # O carimbo sai no journal em nível de depuração, que fica desligado em
+        # uso normal. Sem ele não dá para comparar — e dizer "build antigo"
+        # seria chute.
+        local debug_on
+        debug_on="$(gsettings --schemadir "$EXT_DIR/schemas" \
+            get org.gnome.shell.extensions.gcalendar debug-logging 2>/dev/null || echo false)"
+        if [[ "$debug_on" != true ]]; then
+            warn "Sem carimbo no journal: o diagnóstico está desligado."
+            echo  "  Ligue e recarregue para comparar:  ./install.sh --debug on"
+            return
+        fi
         warn "O Shell ainda não carregou esta versão. Recarregue:"
         restart_hint
     elif [[ "$running" == "$installed" ]]; then
@@ -248,7 +328,7 @@ do_diagnose() {
 # instalada e o Client ID (que é credencial do aplicativo, não da conta).
 do_forget() {
     local cache="$HOME/.cache/$UUID"
-    local schema="org.gnome.shell.extensions.zorin-gcalendar"
+    local schema="org.gnome.shell.extensions.gcalendar"
 
     if [[ -d "$cache" ]]; then
         rm -rf "$cache"
@@ -257,8 +337,8 @@ do_forget() {
         ok "Nenhum cache de eventos em disco"
     fi
 
-    dconf reset "/org/gnome/shell/extensions/zorin-gcalendar/enabled-calendars"
-    dconf reset "/org/gnome/shell/extensions/zorin-gcalendar/last-sync"
+    dconf reset "/org/gnome/shell/extensions/gcalendar/enabled-calendars"
+    dconf reset "/org/gnome/shell/extensions/gcalendar/last-sync"
     ok "IDs de agenda e horário de sincronização apagados do dconf"
 
     # secret-tool é do pacote libsecret-tools e pode não estar instalado;
@@ -274,7 +354,7 @@ import Secret from 'gi://Secret';
 Gio._promisify(Secret, 'password_clear', 'password_clear_finish');
 Gio._promisify(Secret, 'password_lookup', 'password_lookup_finish');
 
-const SCHEMA = new Secret.Schema('org.gnome.shell.extensions.zorin-gcalendar',
+const SCHEMA = new Secret.Schema('org.gnome.shell.extensions.gcalendar',
     Secret.SchemaFlags.NONE, {key: Secret.SchemaAttributeType.STRING});
 
 // O Client Secret é credencial do aplicativo, não da conta: só sai com --all.
@@ -315,8 +395,27 @@ GJS
         warn "Mantidos: Client ID e Client Secret (credenciais do aplicativo)."
         echo  "  Para apagar tudo:  GCAL_FORGET_ALL=1 ./install.sh --forget"
     else
-        dconf reset "/org/gnome/shell/extensions/zorin-gcalendar/client-id"
+        dconf reset "/org/gnome/shell/extensions/gcalendar/client-id"
         ok "Client ID também removido"
+    fi
+}
+
+# A extensão é silenciosa por padrão (exigência prática da revisão do
+# extensions.gnome.org). Isto liga o diagnóstico sem reiniciar o Shell.
+do_debug() {
+    local value="${1:-}"
+    case "$value" in
+        on|true|1)   value=true ;;
+        off|false|0) value=false ;;
+        *) err "Use: ./install.sh --debug on|off" ;;
+    esac
+    [[ -d "$EXT_DIR/schemas" ]] || err "Extensão não instalada — rode ./install.sh antes"
+    gsettings --schemadir "$EXT_DIR/schemas" \
+        set org.gnome.shell.extensions.gcalendar debug-logging "$value"
+    if [[ "$value" == true ]]; then
+        ok "Diagnóstico ligado — veja com ./install.sh --diagnose"
+    else
+        ok "Diagnóstico desligado (só erros vão para o journal)"
     fi
 }
 
@@ -326,7 +425,12 @@ do_zip() {
     compile_schemas
     local zip="$(dirname "$SRC_DIR")/${UUID}.shell-extension.zip"
     rm -f "$zip"
-    ( cd "$SRC_DIR" && zip -qr "$zip" . -x '*.git*' 'tests/*' )
+    # A loja recebe só o que a extensão precisa para rodar: sem testes, sem
+    # carimbo de build local, sem notas internas de desenvolvimento.
+    ( cd "$SRC_DIR" && zip -qr "$zip" . \
+        -x '*.git*' 'tests/*' 'BUILD' 'context.md' )
+    echo "  conteúdo:"
+    unzip -l "$zip" | awk 'NR>3 && NF>3 {print "    " $4}' | grep -v '/$' | sort
     ok "Pacote criado: $zip"
     echo "Envie em https://extensions.gnome.org/upload/"
 }
@@ -335,10 +439,11 @@ case "${1:-install}" in
     --remove) do_remove ;;
     --layer)  do_layer "${2:-}" ;;
     --status) do_status ;;
+    --debug)  do_debug "${2:-}" ;;
     --diagnose) do_diagnose ;;
     --forget) do_forget ;;
     --zip)    do_zip ;;
     --test)   run_tests ;;
-    --help|-h) sed -n '2,16p' "${BASH_SOURCE[0]}" ;;
+    --help|-h) sed -n '2,17p' "${BASH_SOURCE[0]}" ;;
     *)        do_install ;;
 esac

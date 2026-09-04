@@ -30,6 +30,7 @@ export default class ZorinGCalendarExtension extends Extension {
     enable() {
         this._cancellable = new Gio.Cancellable();
         this._settings = this.getSettings();
+        Log.setDebugEnabled(this._settings.get_boolean('debug-logging'));
 
         // Toda inicialização assíncrona pertence a esta "geração"; se o
         // disable() acontecer no meio dela, o resultado é descartado.
@@ -78,6 +79,8 @@ export default class ZorinGCalendarExtension extends Extension {
             this._settingsSignals = [
                 this._settings.connect('changed::client-id',
                     () => this._auth?.emit('state-changed')),
+                this._settings.connect('changed::debug-logging', () =>
+                    Log.setDebugEnabled(this._settings.get_boolean('debug-logging'))),
                 // As preferências rodam em outro processo: é por esta chave
                 // que elas pedem a desconexão completa da conta.
                 this._settings.connect('changed::sign-out-requested', () => {
@@ -87,7 +90,7 @@ export default class ZorinGCalendarExtension extends Extension {
             ];
 
             this._initAsync(generation);
-            Log.info(`habilitada — build ${BUILD}`);
+            Log.debug(`habilitada — build ${BUILD}`);
         } catch (err) {
             Log.error(err, 'enable');
             this.disable();

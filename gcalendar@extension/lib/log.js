@@ -8,12 +8,25 @@
 import GLib from 'gi://GLib';
 
 const PREFIX = '[GCalendar]';
-const DEBUG = GLib.getenv('GCAL_DEBUG') === '1';
 // Usado pela suíte de testes, que provoca erros de propósito.
 const QUIET = GLib.getenv('GCAL_QUIET') === '1';
 
+// Silencioso por padrão: extensões que poluem o journal em uso normal são
+// reprovadas na revisão do extensions.gnome.org. Liga-se pela variável de
+// ambiente ou, em tempo de execução, pela chave `debug-logging`.
+let debugEnabled = GLib.getenv('GCAL_DEBUG') === '1';
+
+/** Ligado/desligado pela extensão conforme a configuração. */
+export function setDebugEnabled(enabled) {
+    debugEnabled = enabled || GLib.getenv('GCAL_DEBUG') === '1';
+}
+
+export function isDebugEnabled() {
+    return debugEnabled;
+}
+
 export function debug(...args) {
-    if (DEBUG)
+    if (debugEnabled && !QUIET)
         console.debug(PREFIX, ...args);
 }
 

@@ -72,17 +72,30 @@
 
 .gcal-grid-day {
     border-radius: 9px;
-    /* Bordas reservadas em TODA célula, sempre com a mesma espessura: só a
-       cor muda. "hoje" colore as quatro; "dia com eventos" colore a de baixo
-       (inline, em MonthGrid._updateEventMarker). Assim nenhum estado altera a
-       geometria. */
+    /* Borda transparente em TODA célula: "hoje" só troca a cor, então o anel
+       não altera a geometria de nenhuma linha. */
     border: 1px solid transparent;
-    border-bottom-width: 3px;
+    padding: 3px 0 2px 0;
     color: rgba(255, 255, 255, 0.88);
     transition-duration: 100ms;
 }
 .gcal-grid-day:hover { background-color: rgba(255, 255, 255, 0.10); }
 .gcal-grid-day:focus { background-color: rgba(255, 255, 255, 0.16); }
+
+/* Altura fixa e sempre presente: a faixa fica vazia nos dias sem evento, para
+   o número não mudar de posição entre as células. */
+.gcal-grid-dots {
+    height: 6px;
+    spacing: 3px;
+    text-align: center;
+}
+
+.gcal-grid-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 3px;
+    margin: 0 1px;
+}
 
 .gcal-grid-day-number {
     font-size: 0.92em;
