@@ -509,10 +509,29 @@ class DesktopWidget extends St.Widget {
      * Por isso descer o widget para baixo de window_group inteiro não o coloca
      * na área de trabalho: o esconde atrás do papel de parede.
      */
+    /**
+     * No Wayland, "atrás das janelas" precisa de outra implementação.
+     *
+     * `global.window_group` é a área de composição de janelas do mutter, não
+     * uma camada de entrada do Shell — tanto que o próprio GNOME só coloca
+     * coisas decorativas ali (papel de parede, realce do alternador, prévia de
+     * encaixe). No X11 o widget ainda recebe cliques porque quem decide é a
+     * região de entrada do stage; no Wayland o evento vai para a superfície do
+     * cliente e o widget fica inerte — visível e morto.
+     *
+     * Então lá ele fica na camada de chrome, onde o clique comprovadamente
+     * chega, e some enquanto uma janela o cobre. O resultado na tela é o
+     * mesmo; o que muda é de onde vem o input.
+     */
+    _usesChromeFallback() {
+        return Meta.is_wayland_compositor();
+    }
+
     _applyLayer() {
         // Valor desconhecido (por exemplo o modo 'auto', removido) cai na
         // área de trabalho, que é o padrão.
-        const parent = this._settings.get_string('widget-layer') === 'top'
+        const onTop = this._settings.get_string('widget-layer') === 'top';
+        const parent = onTop || this._usesChromeFallback()
             ? Main.layoutManager.uiGroup
             : global.window_group;
 
@@ -576,24 +595,27 @@ class DesktopWidget extends St.Widget {
         if (this._destroyed)
             return;
 
-        const layer = this._settings.get_string('widget-layer');
-        if (layer === 'top') {
+        if (this._settings.get_string('widget-layer') === 'top') {
             this.show();
             this._setTracked(true);
             return;
         }
 
-        // 'desktop': o widget está de fato atrás das janelas.
         const blocker = this._findCoveringWindow();
-        this.show();
 
-        // No Wayland o hit-testing vem da ordem dos atores e
-        // `_updateRegions()` nem monta a região de entrada
-        // (`!Meta.is_wayland_compositor()`): soltar o rastreamento não
-        // devolveria clique algum à janela de cima, só desligaria o
-        // tratamento de tela cheia. Já no X11 a região é global, e mantê-la
-        // sob uma janela roubaria o clique dela.
-        this._setTracked(Meta.is_wayland_compositor() || !blocker, blocker);
+        if (this._usesChromeFallback()) {
+            // Camada de chrome: o clique sempre chega, então basta ocultar
+            // enquanto uma janela sobrepõe. Cobre também tela cheia, por isso
+            // o trackFullscreen fica desligado neste caminho.
+            this.visible = !blocker;
+            this._setTracked(true, blocker);
+            return;
+        }
+
+        // X11, de fato atrás das janelas: a região de entrada é global, e
+        // mantê-la sob uma janela roubaria o clique dela.
+        this.show();
+        this._setTracked(!blocker, blocker);
     }
 
     _setTracked(shouldTrack, blocker = null) {
@@ -613,7 +635,11 @@ class DesktopWidget extends St.Widget {
             Main.layoutManager.trackChrome(this, {
                 affectsInputRegion: true,
                 affectsStruts: false,
-                trackFullscreen: true,
+                // No caminho de chrome quem controla a visibilidade é o teste
+                // de sobreposição, que já cobre tela cheia; deixar o
+                // LayoutManager também mexer em `visible` faria os dois brigarem.
+                trackFullscreen: !this._usesChromeFallback() ||
+                    this._settings.get_string('widget-layer') === 'top',
             });
         } else {
             Main.layoutManager.untrackChrome(this);

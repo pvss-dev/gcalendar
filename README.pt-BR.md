@@ -26,7 +26,7 @@ Testado em Zorin OS 18.1 (GNOME Shell 46, GJS 1.80), sessão X11.
 
 ### Pela loja de extensões
 
-Procure por **GCalendar Widget** em [extensions.gnome.org](https://extensions.gnome.org).
+[<img src="https://raw.githubusercontent.com/andyholmes/gnome-shell-extensions-badge/master/get-it-on-ego.svg" height="100" alt="Instale pelo GNOME Extensions">](https://extensions.gnome.org/extension/10866/gcalendar-widget/)
 
 ### A partir do código
 
