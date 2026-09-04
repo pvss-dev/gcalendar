@@ -193,12 +193,17 @@ export default class ZorinGCalendarPrefs extends ExtensionPreferences {
 
         const layerRow = new Adw.ComboRow({
             title: 'Camada',
+            // Rótulos curtos: o popup do ComboRow acompanha a largura da
+            // linha e corta o texto com reticências. A explicação cabe no
+            // subtítulo, que quebra em várias linhas. São também os mesmos
+            // rótulos do menu de botão direito do widget.
             subtitle: 'Onde o widget fica em relação às janelas. ' +
-                      '"Some sob as janelas" é o modo que sempre recebe cliques.',
+                      '"Some sob as janelas" é o modo que sempre recebe cliques; ' +
+                      '"Atrás das janelas" pode não receber quando algo o cobre.',
             model: Gtk.StringList.new([
                 'Atrás das janelas',
-                'Some sob as janelas (mais compatível)',
-                'Sempre visível, acima das janelas',
+                'Some sob as janelas',
+                'Sempre visível',
             ]),
             selected: Math.max(0, LAYERS.indexOf(settings.get_string('widget-layer'))),
         });
